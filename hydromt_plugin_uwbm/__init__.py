@@ -4,4 +4,6 @@ from os.path import dirname, join, abspath
 
 DATADIR = abspath(join(dirname(__file__), "data"))
 
-from .uwbm import UWBM
+__version__ = "0.1.0"
+
+from .uwbm import *

@@ -7,6 +7,11 @@ from typing import Optional, Dict, Any, Union, List
 
 from . import DATADIR, workflows
 
+import hydromt
+import numpy as np
+import pandas as pd
+import geopandas as gpd
+
 __all__ = ["UWBM"]
 
 logger = logging.getLogger(__name__)
@@ -21,7 +26,7 @@ class UWBM(VectorModel):
     _DATADIR: Path = DATADIR
 
     # Name of default folders to create in the model directory
-    _FOLDERS: List[str] = []
+    _FOLDERS: List[str] = ["staticgeoms"]
 
     # Name of defaults catalogs to include when initialising the model
     # For example to include model specific parameter data or mapping
@@ -74,8 +79,173 @@ class UWBM(VectorModel):
         )
         # If your model needs any extra specific initialisation add them here
 
+
+
+
+
     # SETUP METHODS
     # Write here specific methods to add or update model data components
+    
+    def setup_precip_forcing(
+        self,
+        precip_fn: str = "era5_hourly_zarr",
+        chunksize: Optional[int] = None,
+        **kwargs,
+    ) -> None:
+        """Generate area-averaged precipitation forcing for geom.
+
+        Adds model layer:
+
+        * **precip**: precipitation [mm]
+
+        Parameters
+        ----------
+        precip_fn : str, default era5_hourly_zarr
+            Precipitation data source.
+
+            * Required variable: ['precip']
+        chunksize: int, optional
+            Chunksize on time dimension for processing data (not for saving to disk!).
+            If None the data chunksize is used, this can however be optimized for
+            large/small catchments. By default None.
+        """
+        if precip_fn is None:
+            return
+        starttime = self.get_config("starttime")
+        endtime = self.get_config("endtime")
+        freq = pd.to_timedelta(self.get_config("timestepsecs"), unit="s")
+        mask = self.grid[self._MAPS["basins"]].values > 0 #geom ipv raster
+
+        precip = self.data_catalog.get_rasterdataset(
+            precip_fn,
+            geom=self.region,
+            buffer=2,
+            time_tuple=(starttime, endtime),
+            variables=["precip"],
+        )
+
+        if chunksize is not None:
+            precip = precip.chunk({"time": chunksize})
+
+        precip_out = hydromt.workflows.forcing.precip(
+            precip=precip,
+            da_like=self.grid[self._MAPS["elevtn"]],
+            freq=freq,
+            resample_kwargs=dict(label="right", closed="right"),
+            logger=self.logger,
+            **kwargs,
+        )
+
+        # Update meta attributes (used for default output filename later)
+        precip_out.attrs.update({"precip_fn": precip_fn})
+        self.set_forcing(precip_out.where(mask), name="precip")
+
+
+
+
+
+
+
+
+
+
+    def setup_constant_pars(
+        self,
+        response_unit: gpd.GeoDataFrame,
+        value_name: str,
+        value: int or float,
+        name: Optional[str] = None,
+    ) -> gpd.GeoDataFrame:
+        """Adding a constant value to a response unit.
+        
+        Parameters
+        ----------
+        response_unit: pd.GeoDataFrame
+            Response unit geometry
+        value_name: str
+            Name of the attribute that is changed.
+        value: float or int
+            Value of the attribute that is changed.
+        name: str, optional
+            Name of new map layer, this is used to overwrite the name of a DataFrame
+            or to select a variable from a Dataset.
+        
+        Returns
+        ----------
+        response_unit: pd.GeoDataFrame
+            Response unit geometry
+        """
+        ### type checks, copied from set_staticgeoms.
+        gtypes = [gpd.GeoDataFrame, gpd.GeoSeries]
+        if not np.any([isinstance(response_unit, t) for t in gtypes]):
+            raise ValueError("First parameter map(s) should be geopandas.GeoDataFrame or geopandas.GeoSeries")
+        
+        ### setting single value:    
+        if value_name not in response_unit:
+            raise ValueError(f"Attribute '{value_name}' not found in GeoDataFrame")
+        
+        if not (isinstance(value, int) or isinstance(value, float)):
+            raise ValueError(f"The assigned value for '{value_name}' must be an integer or float")
+        else: 
+            response_unit[value_name] = value
+        
+        return response_unit
+
+
+
+
+
+
+
+
+def setup_forcing_from_constant(
+    self,
+    ts_in: pd.DataFrame,
+    key: str,
+    interp_method: Optional[str] = 'none'
+    ) -> pd.DataFrame:
+    """Workflow for temporal interpolation of one or multiple time series. Used for precipitation and evaporation time series.
+
+    Parameters
+    ----------
+    ts_in: pandas.DataFrame
+        Imported DataFrame time series containing precipitation and/or evaporation.
+    key: str
+        Name of key containing forcing data to be interpolated.
+    interp_method: str, optional
+        Method for temporal interpolation of time series. Options: none (default), zeros (inserting zeros), ffill, bfill, linear (linear interpolation between previous and next value)
+
+    Returns
+    ----------
+    p_out: pandas.DataFrame
+        interpolated precipitation and evaporation time series
+    """
+    logger.info(f"Interpolating {key} using {interp_method}.")
+    
+    ### step 1: remove all non-int and non-float vlaues and replace with NaN
+    ts_in[key] = pd.to_numeric(ts_in[key], errors='coerce')
+    
+            
+    ### step 2: replace all negative values with 0
+    ts_in[key][ts_in[key] < 0] = 0
+    
+    ### step 3: Interpolate with provided method
+    if interp_method == 'none':
+        ts_out = ts_in
+    elif interp_method == 'linear':
+        ts_in[key] = ts_in[key].interpolate(method='linear')
+        ts_out = ts_in
+    elif interp_method == 'zeros':
+        ts_out = ts_in.fillna(0)
+    else:
+        ts_out = ts_in.fillna(method=interp_method)
+    
+    return ts_out
+
+
+
+
+
 
     # I/O METHODS
     # Write here specific methods to read or write model data components or overwrite the ones from HydroMT CORE

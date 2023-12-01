@@ -1,0 +1,51 @@
+project:
+  type: website
+
+website:
+  title: "HydroMT plugin UWBM"
+  page-navigation: true
+  navbar:
+    left:
+      - text: "Getting started"
+        file: getting_started/index.qmd
+      - text: "User guide"
+        file: user_guide/index.qmd
+      - text: "Contributing"
+        file: contributing/index.qmd
+    right:
+      - icon: github
+        href: https://github.com/daanrooze/hydromt_plugin_uwbm
+        aria-label: GitHub
+
+  sidebar:
+    - title: "Getting started"
+      contents:
+        - getting_started/index.qmd
+        - getting_started/installation.qmd
+    - title: "User guide"
+      contents:
+        - user_guide/index.qmd
+        - user_guide/uwbm.qmd
+    - title: "Contributing"
+      contents:
+        - contributing/index.qmd
+
+format:
+  html:
+    theme: cosmo
+    css: assets/styles.css
+    toc: true
+
+bibliography: references.bib
+number-sections: true
+
+quartodoc:
+  style: pkgdown
+  dir: python/reference
+  title: API Reference
+  package: hydromt_plugin_uwbm
+  sections:
+    - title: Model
+      desc: The Model class represents an entire HydroMT plugin UWBM model.
+      contents:
+        - Model

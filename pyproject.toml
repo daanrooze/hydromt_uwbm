@@ -1,0 +1,87 @@
+[build-system]
+requires = ["flit_core >=3.4.0,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "hydromt_plugin_uwbm"
+dependencies = [
+    "hydromt",
+    "tomli",        # parsing toml files
+]
+
+version = "0.1.0"
+description = "A HydroMT plugin for the Urban Water Balance Model"
+
+requires-python = ">=3.9"
+classifiers = [
+    # https://pypi.python.org/pypi?%3Aaction=list_classifiers
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Hydrology",
+    "Programming Language :: Python :: 3",
+]
+
+[project.optional-dependencies]
+# here you can add dependency groups like this: 
+# group = [dep1, dep2,...]
+doc = []
+dev = [
+    "black",            # code formatting
+    "ruff",             # code linting
+    "pre-commit",       # pre-commit hooks
+]
+test = [
+    "pytest>=2.7.3",    # testing framework
+    "pytest-cov",       # pytest plugin for coverage reports
+]
+
+full = ["hydromt_plugin_uwbm[doc,dev,test]"]
+
+[project.urls]
+Documentation = "https://daanrooze.github.io/hydromt_plugin_uwbm"
+Source = "https://github.com/daanrooze/hydromt_plugin_uwbm"
+
+[project.entry-points."hydromt.models"] 
+uwbm = "hydromt_plugin_uwbm.uwbm:UWBM"
+
+[tool.black]
+line-length = 88
+target-version = ['py39']
+
+[tool.ruff]
+line-length = 88
+# enable pydocstyle (E), pyflake (F) and isort (I), pytest-style (PT)
+select = ["E", "F", "I", "PT", "D"]
+ignore-init-module-imports = true
+ignore = ["D211", "D213", "E741", "D105", "E712"]
+exclude = ["docs"]
+
+[tool.ruff.pydocstyle]
+convention = "numpy"
+
+[tool.flit.sdist]
+include = ["hydromt_plugin_uwbm"]
+exclude = ["docs", "examples", "tests", ".github"]
+
+
+[tool.mypy]
+packages = [
+"hydromt_plugin_uwbm"    
+]
+exclude = [
+    "docs",
+]
+python_version = "3.11"
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+strict_equality = true
+strict_concatenate = true
+check_untyped_defs = true
+disallow_untyped_calls = true
+disallow_incomplete_defs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

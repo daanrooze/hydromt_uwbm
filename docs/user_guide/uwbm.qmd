@@ -1,0 +1,102 @@
+---
+Title: 'Working with the uwbm model'
+---
+
+# Model methods and components
+
+The HydroMT plugin UWBM plugin helps you preparing or updating several methods of a uwbm model such as static parameters or forcing.
+The main interactions are available from the HydroMT Command Line Interface and allow you to configure
+HydroMT in order to build or update uwbm models.
+
+When building or updating a model from command line a
+[model region](https://deltares.github.io/hydromt/latest/user_guide/model_region); a model setup
+[configuration](https://deltares.github.io/hydromt/latest/user_guide/model_config.html) (.yml) file with model methods and options and
+a [data sources](https://deltares.github.io/hydromt/latest/user_guide/data_main) (.yml) file should be prepared.
+
+## Model setup methods
+
+An overview of the available uwbm model setup methods
+is provided in the table below. When using HydroMT from the command line only the
+setup, read, write methods are exposed. Click on a specific method see its documentation.
+
++---------------------+----------------------------------------------------------------------------+
+| Method              | Explanation                                                                |
++=====================+============================================================================+
+| `setup_config`      | HydroMT CORE: prepare or update config from dictionnary.                   |
++---------------------+----------------------------------------------------------------------------+
+| `setup_region`      | HydroMT CORE: prepare region geom from region dictionnary.                 |
++---------------------+----------------------------------------------------------------------------+
+
+## Model components and attributes
+The following table provides an overview of which UWBM
+component contains which uwbm in- and output files. The files are read and written with the associated
+read- and write- methods, i.e. `read_config` and `write_config` for the `config` component.
+
++---------------------+----------------------------------------------------------------------------+
+| Component           | Explanation                                                                |
++=====================+============================================================================+
+| `config`            | Model configuration file.                                                  |
++---------------------+----------------------------------------------------------------------------+
+| `maps`              | Model static maps / gridsdata.                                             |
++---------------------+----------------------------------------------------------------------------+
+| `geoms`             | Model geometries.                                                          |
++---------------------+----------------------------------------------------------------------------+
+| `forcing`           | Model forcing.                                                             |
++---------------------+----------------------------------------------------------------------------+
+| `states`            | Model states.                                                              |
++---------------------+----------------------------------------------------------------------------+
+| `results`           | Model results.                                                             |
++---------------------+----------------------------------------------------------------------------+
+
+# Building a model
+This plugin allows to build from scratch a complete model from available data.
+
+**Steps in brief:**
+
+1. Define the geographical region for which you would like to build a model using the correct HydroMT [region options](https://deltares.github.io/hydromt/latest/user_guide/model_region.html).
+2. Prepare or use a pre-defined **data catalog** with all the required data sources, see [working with data](https://deltares.github.io/hydromt/latest/user_guide/data_overview.html).
+3. Prepare a **model configuration** with the methods that you want to use to add components of your model, see [model configuration](https://deltares.github.io/hydromt/latest/user_guide/model_config.html).
+4. **Build** your model using the CLI or Python interface.
+
+```
+    hydromt build uwbm path/to/built_model -r "{'bbox': [xmin, ymin, xmax, ymax]}" -i uwbm_build.ini -d data_sources.yml -vvv
+```
+
+The recommended [region options](https://deltares.github.io/hydromt/latest/user_guide/model_region.html)
+for a proper implementation of this model are:
+
+- bbox
+- geom
+- others
+
+You can find more information on the steps to build a model in [HydroMT Core documentation](https://deltares.github.io/hydromt/latest/user_guide/model_build.html).
+
+# Updating a model
+To add or change one or more components of an existing uwbm model the `update` method can be used.
+
+**Steps in brief:**
+
+1. You have an **existing model** schematization. This model does not have to be complete.
+2. Prepare or use a pre-defined **data catalog** with all the required data sources, see [working with data](https://deltares.github.io/hydromt/latest/user_guide/data_overview.html).
+3. Prepare a **model configuration** with the methods that you want to use to add or change components of your model, see [model configuration](https://deltares.github.io/hydromt/latest/user_guide/model_config.html).
+4. **Update** your model using the CLI or Python interface.
+
+```
+    hydromt update uwbm path/to/model_to_update -o path/to/updated_model -i uwbm_update.ini -d data_sources.yml -vvv
+```
+
+:::{.callout-note}
+By default, the updated model will overwrite your existing one. To save the updated model in a different 
+folder, use the -o path/to/updated_model option of the CLI.
+:::
+
+:::{.callout-tip}
+By default all model data is written at the end of the update method. If your update however 
+only affects a certain model component (e.g. config or forcing) you can add a write_* method 
+(e.g. `write_config`, `write_forcing`) to the HydroMT configuration file and only these components will be written.
+    
+Note that the model config is often changed as part of a model method and `write_config` 
+should thus be added to the HydroMT configuration file to keep the model data and config consistent.
+:::
+
+You can find more information on the steps to build a model in [HydroMT Core documentation](https://deltares.github.io/hydromt/latest/user_guide/model_update.html).

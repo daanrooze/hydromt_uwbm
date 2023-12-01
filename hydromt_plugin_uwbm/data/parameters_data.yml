@@ -1,0 +1,5 @@
+meta:
+  key: value
+  # these are necessary to make the tests pass upon generation.
+  # once you have anything of your own to add here all of the above
+  # can be removed

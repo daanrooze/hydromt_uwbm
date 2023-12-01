@@ -1,0 +1,17 @@
+---
+Title: 'User guide'
+---
+
+With the **HydroMT plugin UWBM plugin**, users can easily benefit from the rich set of tools of the
+[HydroMT package](https://deltares.github.io/hydromt/latest/index.html) to build and update
+uwbm models from available global and local data.
+
+This plugin assists the uwbm modeller in:
+
+- Quickly setting up a base uwbm model and default parameter values
+- Making maximum use of the best available global or local data
+- Adjusting and updating components of a uwbm model and their associated parameters in a consistent way
+
+One uwbm Model classes is currently available:
+
+- ``uwbm`` (VectorModel): class for the uwbm model.

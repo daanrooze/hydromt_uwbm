@@ -14,28 +14,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-#%%
 case = 'aoi_1_Votris'
 
 rootdir = r"P:\11207698-reachout-project\scripts"

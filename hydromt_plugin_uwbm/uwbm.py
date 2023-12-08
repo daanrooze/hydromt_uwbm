@@ -2,6 +2,7 @@ import logging
 from hydromt.models import VectorModel
 
 from pathlib import Path
+import os
 from os.path import basename, dirname, isdir, isfile, join
 from typing import Optional, Dict, Any, Union, List
 
@@ -94,16 +95,46 @@ class UWBM(VectorModel):
     # SETUP METHODS
     # Write here specific methods to add or update model data components
     
+    #TODO add function for checking if folders exist, otherwise add folders
+    def makedir(
+            self,
+            path
+    ):
+        if not os.path.exists(path):
+            self.logger.info(f"Directory {path} not found. Creating new directory.")
+            os.makedirs(path)
+   
+
     
-    def setup_project_geom(
+    def setup_project(
         self,
-        fn: str = "project_geom"
+        name: str = None,
+        t_start: str = None,
+        t_end: str = None,
+        ts: int = None,
     ):
         """Setup project geometry from vector"""
-        project_geom = self.read_geoms(fn)
-        self.set_geoms(project_geom, name="project_geom")
-    
-    
+        if name == None:
+            raise IOError("Provide name of case study")
+        if t_start == None:
+            raise IOError("Provide start date of time period in format YYYY-MM-DD")
+        if t_end == None:
+            raise IOError("Provide end date of time period in format YYYY-MM-DD")
+        if ts == None or ts not in [3600,86400]:
+            raise IOError("Provide timestep in seconds (3600 or 86400 seconds)")
+        
+        _dir = "project_area"
+        
+        #TODO Add check on empty project area folder.
+        # if case not in join(self.root, "input_data", _dir):
+            #raise IOError(f"Case study region not found in {_dir}")
+
+        self.read_geoms(_dir, name)
+        self.set_geoms(self.geoms[name], name="project_geom")
+        self.set_config("starttime", pd.to_datetime(t_start))
+        self.set_config("endtime", pd.to_datetime(t_end))
+        self.set_config("timestepsecs", ts)
+        self.set_config("name", name)
     
     
     def setup_precip_forcing(
@@ -129,7 +160,8 @@ class UWBM(VectorModel):
         starttime = self.get_config("starttime")
         endtime = self.get_config("endtime")
         freq = pd.to_timedelta(self.get_config("timestepsecs"), unit="s")
-        geom = self.geoms[self._GEOMS["project_geom"]]
+        geom = self.geoms["project_geom"]
+        #geom = self.geoms[self._GEOMS["project_geom"]]
 
         precip = self.data_catalog.get_rasterdataset(
             precip_fn,
@@ -138,20 +170,13 @@ class UWBM(VectorModel):
             time_tuple=(starttime, endtime),
             variables=["precip"],
         )
-
-        precip_out = precip.raster.sample(geom.centroid).to_dataframe() #geom of .self(region)
+        
+        precip = hydromt.workflows.forcing.resample_time(precip, freq = freq, downsampling="sum")
+        
+        precip_out = precip.raster.sample(geom.centroid).to_dataframe()
         precip_out = precip_out.droplevel(level=1).reset_index()    #Data can be xarray.DataArray, xarray.Dataset or pandas.DataFrame.
                                                                     #If pandas.DataFrame, indices should be the DataFrame index and the columns
                                                                     #the variable names.
-
-        #precip_out = hydromt.workflows.forcing.precip(
-        #    precip=precip,
-        #    da_like=self.grid[self._MAPS["elevtn"]],
-        #    freq=freq,
-        #    resample_kwargs=dict(label="right", closed="right"),
-        #    logger=self.logger,
-        #    **kwargs,
-        #)
 
         precip_out.attrs.update({"precip_fn": precip_fn}) # <- needed or not?
         self.set_forcing(precip_out, name="precip")
@@ -217,7 +242,8 @@ class UWBM(VectorModel):
         endtime = self.get_config("endtime")
         timestep = self.get_config("timestepsecs")
         freq = pd.to_timedelta(timestep, unit="s")
-        geom = self.geoms[self._GEOMS["project_geom"]]
+        geom = self.geoms["project_geom"]
+        #geom = self.geoms[self._GEOMS["project_geom"]]
 
         variables = ["temp"]
         if pet_method == "debruin":
@@ -265,7 +291,7 @@ class UWBM(VectorModel):
 
         temp_in = hydromt.workflows.forcing.temp(
             ds["temp"],
-            dem_model=self.grid[self._MAPS["elevtn"]],
+            dem_model=dem_forcing, #TODO 'ValueError: dimension 'time' already exists as a scalar variable'
             dem_forcing=dem_forcing,
             lapse_correction=temp_correction,
             logger=self.logger,
@@ -301,7 +327,7 @@ class UWBM(VectorModel):
             temp_in = xr.merge([temp_in, temp_max_in, temp_min_in])
 
 
-        # hoe meerdere datasets te samplen alvorens forcing.pet() te callen? ds, temp, dem_model, ...
+        #TODO: how to sample ds, temp_in, dem_model before calculating forcing.pet()?
         ds_out = ds.raster.sample(geom.centroid).to_dataframe() 
         ds_out = ds_out.droplevel(level=1).reset_index()    #Data can be xarray.DataArray, xarray.Dataset or pandas.DataFrame.
                                                                     #If pandas.DataFrame, indices should be the DataFrame index and the columns
@@ -309,7 +335,7 @@ class UWBM(VectorModel):
 
 
         pet_out = hydromt.workflows.forcing.pet(
-            ds[variables[1:]],
+            ds_out[variables[1:]],
             temp=temp_in,
             dem_model=self.grid[self._MAPS["elevtn"]],
             method=pet_method,
@@ -323,7 +349,7 @@ class UWBM(VectorModel):
             **kwargs,
         )
         
-        pet_out = setup_forcing_from_constant(object, pet_out, variables, 'zeros') # call interpolation function
+        pet_out = hydromt.workflows.forcing.resample_time(pet_out[{variables}], freq = freq, downsampling="sum")
         
         # Update meta attributes with setup opt
         opt_attr = {
@@ -337,13 +363,16 @@ class UWBM(VectorModel):
 
 
 
-
+    
     def setup_landuse(
         self,
         landuse_mapping_fn="osm_mapping",
     ):
         
-        osm = self.geoms[self._GEOMS["OSM"]]
+        self.read_OSM() # of read_geoms
+        
+        
+        osm = self.geoms["OSM"]
         ds_landuse = workflows.landuse(
             osm,
             landuse_mapping_fn=self.tables[self._tables["osm_mapping"]]
@@ -378,7 +407,7 @@ class UWBM(VectorModel):
         response_unit: pd.GeoDataFrame
             Response unit geometry
         """
-        geom = self.geoms
+        geom = self.geoms["project_geom"]
         
         ### type checks, copied from set_staticgeoms.
         gtypes = [gpd.GeoDataFrame, gpd.GeoSeries]
@@ -452,9 +481,16 @@ class UWBM(VectorModel):
 
 
 
-    def setup_model_config(self, fn):
+    def setup_model_config(self, fn): #TODO: how to bring values from setup_landuse (saved as dF or dict) into the config toml file?
         """Update TOML configuration file based on landuse calculations"""
-        self.set_config("old", "new") #refer to dictionary created by OSM landuse
+        self.set_config("total_area", "value") #refer to dictionary created by OSM landuse
+        self.set_config("total_area", "value")
+        self.set_config("total_area", "value")
+        self.set_config("total_area", "value")
+        self.set_config("total_area", "value")
+        self.set_config("total_area", "value")
+        
+        
         return
 
 
@@ -464,20 +500,27 @@ class UWBM(VectorModel):
 
     def read_geoms(
             self,
-            geom_fn: str = "geoms",
+            _dir: str,
+            geom_fn: str = None,
         ):
             """Read geoms at <root/data/geoms> and parse to geopandas."""
             if not self._write:
                 self._geoms = dict()  # fresh start in read-only mode
-            dir_default = join(self.root, "data")
-            dir_mod = dirname( #op zoek naar input/geoms
-                self.get_config("geoms", abs_path=True, fallback=dir_default)
-            )
-            fns = glob.glob(join(dir_mod, geom_fn, "*.shp"))
-            if len(fns) > 1:
-                self.logger.info("Reading model staticgeom files.")
+            dir_default = join(self.root, "input_data", _dir)
+       #     dir_mod = dirname(
+       #         self.get_config("geoms", abs_path=True, fallback=dir_default)
+       #     )
+            if geom_fn == None:
+                fns = glob.glob(join(dir_default, "*.shp"))
+            else:
+                fns = glob.glob(join(dir_default, f"{geom_fn}.shp"))
+       #     if len(fns) > 1:
+       #         self.logger.info("Reading model staticgeom files.")
             for fn in fns:
-                name = basename(fn).split(".")[0]
+                if geom_fn == None:
+                    name = basename(fn).split(".")[0]
+                else:
+                    name = geom_fn
                 self.set_geoms(gpd.read_file(fn), name=name)
 
 
@@ -494,14 +537,14 @@ class UWBM(VectorModel):
     ):
         if not self._write:
             self._geoms = dict()  # fresh start in read-only mode
-        dir_default = join(self.root, "data")
-        dir_mod = dirname( #op zoek naar input/landuse
-            self.get_config("landuse", abs_path=True, fallback=dir_default)
-        )
-        fns = glob.glob(join(dir_mod, layers, "*.shp") in layers) #selectie van files op basis van 'layers'
+        dir_default = join(self.root, "input_data")
+    #    dir_mod = dirname( #op zoek naar input/landuse
+    #        self.get_config("landuse", abs_path=True, fallback=dir_default)
+    #    )
+        fns = glob.glob(join(dir_default, "input_data", "*.shp") in layers) #TODO: how to only import the relevant layers?
         for fn in fns:
             name = basename(fn).split(".")[0]
-            self.set_geoms(gpd.read_file(fn, mask = self.geoms), name="OSM") #save to single geopackage or different files under _geoms?
+            self.set_geoms(gpd.read_file(fn, mask = self.geoms), name="OSM") #TODO: save to single geopackage or different files under _geoms?
 
 
 
@@ -512,7 +555,8 @@ class UWBM(VectorModel):
             self._tables = dict()  # start fresh in read-only mode
 
         self.logger.info("Reading model table files.")
-        fns = glob.glob(join(self.root, "*.csv"))
+        dir_landuse = join(self.root, "input_data/landuse")
+        fns = glob.glob(join(dir_landuse, "*.csv"))
         if len(fns) > 0:
             for fn in fns:
                 name = basename(fn).split(".")[0]
@@ -520,18 +564,6 @@ class UWBM(VectorModel):
                 self.set_tables(tbl, name=name)
                 #error message if more than 1 file for converting landuse
 
-
-    def set_tables(self, df, name): #UNNECESSARY FUNCTION?
-        """Add table <pandas.DataFrame> to model."""
-        """ADD OSM LANDUSE TRANSLATION TABLE TO MODEL - copied from wflow"""
-        if not (isinstance(df, pd.DataFrame) or isinstance(df, pd.Series)):
-            raise ValueError("df type not recognized, should be pandas.DataFrame.")
-        if name in self._tables:
-            if not self._write:
-                raise IOError(f"Cannot overwrite table {name} in read-only mode")
-            elif self._read:
-                self.logger.warning(f"Overwriting table: {name}")
-        self._tables[name] = df
 
 
 
@@ -541,7 +573,7 @@ class UWBM(VectorModel):
         """Read TOML configuration file"""
         with codecs.open(fn, "r", encoding="utf-8") as f:
             fdict = toml.load(f)
-        return fdict
+        return fdict #TODO how to add to model?
 
     def _configwrite(self, fn):
         """Write TOML configuration file"""
@@ -557,7 +589,6 @@ class UWBM(VectorModel):
     
     def write_forcing(
         self,
-        fn_out=None,
         decimals=2,
         datetime_format="%d-%m-%Y %H:%M",
         **kwargs,
@@ -581,11 +612,14 @@ class UWBM(VectorModel):
         
         #fn_out = # <- e.g. 'Dehradun_30y_1h.csv'
         
-        df = self.forcing
+        df = pd.DataFrame.from_dict(self.forcing)
         
         ### Selecting desired variables
-        df = df[["time", "precip", "PET"]]
+        df = df[["time", "precip"]]#, "PET"]] #TODO REMOVE HASH ONCE PET IS FIXED
         ### rename columns
+        
+        df['PET']=df['precip'] #TODO REMOVE FROM FILE ONCE PET IS FIXED
+        
         df = df.rename(columns={"time":"date", "precip":"P_atm", "PET":"E_pot_OW"})
         ### calculate crop reference ET
         df["Ref.grass"] = df["E_pot_OW"] * 0.8982
@@ -593,8 +627,11 @@ class UWBM(VectorModel):
         df = df.loc[:, ["date","P_atm","Ref.grass","E_pot_OW"]]
         df = df.set_index("date")
         
-        df.to_csv(fn_out, sep=',', date_format=datetime_format)
-        #hydromt.models.model_api.write_tables(self, df, sep=',', date_format=datetime_format) # <- does this work?
+        h = int(self.config["timestepsecs"] / 3600)
+        num_yrs = int(np.round(((self.config["endtime"]-self.config["starttime"]).days)/365.25, 0))
+        path = join(self.root, "output/forcing", f"Forcing_{self.config['name']}_{num_yrs}y_{h}h.csv")
+        
+        df.to_csv(path, sep=',', date_format=datetime_format)
     
     
     

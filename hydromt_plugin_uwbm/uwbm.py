@@ -9,6 +9,7 @@ from typing import Optional, Dict, Any, Union, List
 from . import DATADIR, workflows
 
 import hydromt
+from hydromt import workflows
 import numpy as np
 import pandas as pd
 import geopandas as gpd
@@ -32,9 +33,14 @@ class UWBM(VectorModel):
     _GEOMS = {
         "OSM": "OpenStreetMap"
         }
+    _FORCING = {            #TODO use this dict for renaming, but is it needed?
+        "time" : "date",
+        "precip": "P_atm",
+        "PET":"E_pot_OW"
+        }
 
     # Name of default folders to create in the model directory
-    _FOLDERS: List[str] = ["input"]
+    _FOLDERS: List[str] = ["input_data", "output"]
 
     # Name of defaults catalogs to include when initialising the model
     # For example to include model specific parameter data or mapping
@@ -82,12 +88,12 @@ class UWBM(VectorModel):
             root=root,
             mode=mode,
             config_fn=config_fn,
-            data_libs=data_libs,
+            data_libs=data_libs, #TODO add local files to data_libs
             logger=logger,
         )
         # If your model needs any extra specific initialisation add them here
-        self._tables = dict()
-        self._geoms = None
+        #self._tables = dict()  #TODO remove line
+        #self._geoms = None     #TODO remove line
 
 
 
@@ -108,14 +114,17 @@ class UWBM(VectorModel):
     
     def setup_project(
         self,
-        name: str = None,
+        region,
+        name: str = None, #TODO I need to specify a specific pilot name
         t_start: str = None,
         t_end: str = None,
         ts: int = None,
     ):
         """Setup project geometry from vector"""
         if name == None:
-            raise IOError("Provide name of case study")
+            raise IOError("Provide name of study")
+        if region == None:
+            raise IOError("Provide path to case study project area")
         if t_start == None:
             raise IOError("Provide start date of time period in format YYYY-MM-DD")
         if t_end == None:
@@ -123,18 +132,29 @@ class UWBM(VectorModel):
         if ts == None or ts not in [3600,86400]:
             raise IOError("Provide timestep in seconds (3600 or 86400 seconds)")
         
+        
+        kind, region = workflows.parse_region( #TODO: /t is interpreted as tab instead of string in filename
+            region, data_catalog=self.data_catalog, logger=self.logger #TODO: only json supported?
+        )
+        
+        if kind in ["geom", "bbox"]:
+            self.setup_region(region=region, hydrography_fn=None, basin_index_fn=None)
+        else:
+            raise IOError("Provide project region as either GeoPandas DataFrame or BoundingBox.")
+
         _dir = "project_area"
         
         #TODO Add check on empty project area folder.
         # if case not in join(self.root, "input_data", _dir):
             #raise IOError(f"Case study region not found in {_dir}")
 
-        self.read_geoms(_dir, name)
-        self.set_geoms(self.geoms[name], name="project_geom")
+        #self.read_geoms(_dir, name)
+        #self.set_geoms(self.geoms[name], name="project_geom")
         self.set_config("starttime", pd.to_datetime(t_start))
         self.set_config("endtime", pd.to_datetime(t_end))
         self.set_config("timestepsecs", ts)
         self.set_config("name", name)
+    
     
     
     def setup_precip_forcing(
@@ -160,8 +180,9 @@ class UWBM(VectorModel):
         starttime = self.get_config("starttime")
         endtime = self.get_config("endtime")
         freq = pd.to_timedelta(self.get_config("timestepsecs"), unit="s")
-        geom = self.geoms["project_geom"]
-        #geom = self.geoms[self._GEOMS["project_geom"]]
+        geom = self.region
+        #geom = self.geoms["project_geom"]
+
 
         precip = self.data_catalog.get_rasterdataset(
             precip_fn,
@@ -173,24 +194,20 @@ class UWBM(VectorModel):
         
         precip = hydromt.workflows.forcing.resample_time(precip, freq = freq, downsampling="sum")
         
-        precip_out = precip.raster.sample(geom.centroid).to_dataframe()
-        precip_out = precip_out.droplevel(level=1).reset_index()    #Data can be xarray.DataArray, xarray.Dataset or pandas.DataFrame.
-                                                                    #If pandas.DataFrame, indices should be the DataFrame index and the columns
-                                                                    #the variable names.
+        precip_out = precip.raster.sample(geom.centroid).to_dataframe(name="P_atm")
+        precip_out = precip_out.droplevel(level=1).reset_index()
 
-        precip_out.attrs.update({"precip_fn": precip_fn}) # <- needed or not?
+        precip_out.attrs.update({"precip_fn": precip_fn})
         self.set_forcing(precip_out, name="precip")
-
-
 
 
 
     def setup_pet_forcing(
         self,
         temp_pet_fn: str = "era5_hourly_zarr",
-        pet_method: str = "penman-monteith_rh_simple",
-        press_correction: bool = True,
-        temp_correction: bool = True,
+        pet_method: str = "debruin",
+        press_correction: bool = False,
+        temp_correction: bool = False,
         wind_correction: bool = True,
         wind_altitude: int = 10,
         reproj_method: str = "nearest_index",
@@ -236,14 +253,16 @@ class UWBM(VectorModel):
                     If temp_correction is True and dem_forcing_fn is provided this is used in
                     combination with elevation at model resolution to correct the temperature.
         """
+        press_correction = False
+        temp_correction = False
+        
         if temp_pet_fn is None:
             return
         starttime = self.get_config("starttime")
         endtime = self.get_config("endtime")
         timestep = self.get_config("timestepsecs")
         freq = pd.to_timedelta(timestep, unit="s")
-        geom = self.geoms["project_geom"]
-        #geom = self.geoms[self._GEOMS["project_geom"]]
+        geom = self.region
 
         variables = ["temp"]
         if pet_method == "debruin":
@@ -266,8 +285,8 @@ class UWBM(VectorModel):
             methods = [
                 "debruin",
                 "makking",
-                "penman-monteith_rh_simple",
-                "penman-monteith_tdew",
+            #    "penman-monteith_rh_simple",
+            #    "penman-monteith_tdew",
             ]
             ValueError(f"Unknown pet method {pet_method}, select from {methods}")
 
@@ -280,28 +299,29 @@ class UWBM(VectorModel):
             single_var_as_array=False,  # always return dataset
         )
 
-        dem_forcing = None
-        if dem_forcing_fn is not None:
-            dem_forcing = self.data_catalog.get_rasterdataset(
-                dem_forcing_fn,
-                geom=ds.raster.box,  # clip dem with forcing bbox for full coverage
-                buffer=2,
-                variables=["elevtn"],
-            ).squeeze()
-
-        temp_in = hydromt.workflows.forcing.temp(
-            ds["temp"],
-            dem_model=dem_forcing, #TODO 'ValueError: dimension 'time' already exists as a scalar variable'
-            dem_forcing=dem_forcing,
-            lapse_correction=temp_correction,
-            logger=self.logger,
-            freq=None,  # resample time after pet workflow
-            **kwargs,
-        )
-
         if (
             "penman-monteith" in pet_method
         ):  # also downscaled temp_min and temp_max for Penman needed
+        
+            dem_forcing = None
+            if dem_forcing_fn is not None:
+                dem_forcing = self.data_catalog.get_rasterdataset(
+                    dem_forcing_fn,
+                    geom=ds.raster.box,  # clip dem with forcing bbox for full coverage
+                    buffer=2,
+                    variables=["elevtn"],
+                ).squeeze()
+
+            temp_in = hydromt.workflows.forcing.temp(
+                ds["temp"],
+                dem_model=None, #TODO 'ValueError: dimension 'time' already exists as a scalar variable'
+                dem_forcing=dem_forcing,
+                lapse_correction=temp_correction,
+                logger=self.logger,
+                freq=None,  # resample time after pet workflow
+                **kwargs,
+            )
+        
             temp_max_in = hydromt.workflows.forcing.temp(
                 ds["temp_max"],
                 dem_model=self.grid[self._MAPS["elevtn"]],
@@ -327,37 +347,88 @@ class UWBM(VectorModel):
             temp_in = xr.merge([temp_in, temp_max_in, temp_min_in])
 
 
-        #TODO: how to sample ds, temp_in, dem_model before calculating forcing.pet()?
-        ds_out = ds.raster.sample(geom.centroid).to_dataframe() 
-        ds_out = ds_out.droplevel(level=1).reset_index()    #Data can be xarray.DataArray, xarray.Dataset or pandas.DataFrame.
-                                                                    #If pandas.DataFrame, indices should be the DataFrame index and the columns
-                                                                    #the variable names.
-
-
-        pet_out = hydromt.workflows.forcing.pet(
-            ds_out[variables[1:]],
-            temp=temp_in,
-            dem_model=self.grid[self._MAPS["elevtn"]],
-            method=pet_method,
-            press_correction=press_correction,
-            wind_correction=wind_correction,
-            wind_altitude=wind_altitude,
-            reproj_method=reproj_method,
-            freq=freq,
-            resample_kwargs=dict(label="right", closed="right"),
-            logger=self.logger,
-            **kwargs,
-        )
+        ds_out = ds.raster.sample(geom.centroid)
         
-        pet_out = hydromt.workflows.forcing.resample_time(pet_out[{variables}], freq = freq, downsampling="sum")
+        if pet_method == "debruin":
+            pet_out = hydromt.workflows.forcing.pet_debruin(
+                ds_out["temp"], 
+                ds_out["press_msl"], 
+                ds_out["kin"], 
+                ds_out["kout"], 
+                timestep=86400, 
+                cp=1005.0, 
+                beta=20.0, 
+                Cs=110.0
+            )
         
+        elif pet_method == "makkink":
+            pet_out = hydromt.workflows.forcing.pet_makkink(
+                ds_out["temp"], 
+                ds_out["press_msl"], 
+                ds_out["kin"], 
+                timestep=86400, 
+                cp=1005.0
+            )
+        
+        '''elif "penman-monteith" in pet_method:
+            logger.info("Calculating Penman-Monteith ref evaporation")
+            # Add wind
+            # compute wind from u and v components at 10m (for era5)
+            if ("wind10_u" in ds.data_vars) & ("wind10_v" in ds.data_vars):
+                ds["wind"] = wind(
+                    da_model=dem_model,
+                    wind_u=ds["wind10_u"],
+                    wind_v=ds["wind10_v"],
+                    altitude=wind_altitude,
+                    altitude_correction=wind_correction,
+                )
+            else:
+                ds["wind"] = wind(
+                    da_model=dem_model,
+                    wind=ds["wind"],
+                    altitude=wind_altitude,
+                    altitude_correction=wind_correction,
+                )
+            if pet_method == "penman-monteith_rh_simple":
+                pet_out = pm_fao56(
+                    temp["temp"],
+                    temp["temp_max"],
+                    temp["temp_min"],
+                    ds["press"],
+                    ds["kin"],
+                    ds["wind"],
+                    ds["rh"],
+                    dem_model,
+                    "rh",
+                )
+            elif pet_method == "penman-monteith_tdew":
+                pet_out = pm_fao56(
+                    temp["temp"],
+                    temp["temp_max"],
+                    temp["temp_min"],
+                    ds["press"],
+                    ds["kin"],
+                    ds["wind"],
+                    ds["temp_dew"],
+                    dem_model,
+                    "temp_dew",
+                )
+        '''
+  
+        pet_out = hydromt.workflows.forcing.resample_time(pet_out, freq = freq, downsampling="sum")
+        
+        pet_out = pet_out.to_dataframe(name="E_pot_OW") #TODO: how to add name to dataarray in PET calculation?
+        pet_out = pet_out.droplevel(level=1).reset_index()
+        
+        pet_out["Ref.grass"] = pet_out["E_pot_OW"] * 0.8982
+    
         # Update meta attributes with setup opt
         opt_attr = {
             "pet_fn": temp_pet_fn,
             "pet_method": pet_method,
         }
-        pet_out.attrs.update(opt_attr) # <- needed or not?
-        self.set_forcing(pet_out, name="pet") # <- does this automatically add to the existing dataframe in self.forcing?
+        pet_out.attrs.update(opt_attr)
+        self.set_forcing(pet_out, name="pet")
 
 
 
@@ -366,17 +437,41 @@ class UWBM(VectorModel):
     
     def setup_landuse(
         self,
+        source: str = "osm",
         landuse_mapping_fn="osm_mapping",
     ):
+        sources = ["osm"]
+        if source not in sources:
+            raise IOError(f"Provide source of landuse files from {sources}")
         
-        self.read_OSM() # of read_geoms
+        if source == "osm":
+            self.read_tables(cat = "landuse")
+            #TODO: add check if columns are called correctly
+            #TODO: add check if width values are not integer or float
+            #TODO: add check if 'reclass' is in [paved_roof, closed_paved, open_paved, unpaved, water]
+            
+            layers = [
+                "gis_osm_roads_free_1",
+                "gis_osm_railways_free_1",
+                "gis_osm_waterways_free_1",
+                "gis_osm_buildings_a_free_1",
+                "gis_osm_water_a_free_1"
+            ]
+            
+            for layer in layers:
+                self.read_geoms(_dir = "landuse", geom_fn = layer)
+            
+            #self.get_data()
+            #osm = self.geoms["OSM"]
+            ds_landuse = workflows.landuse_from_osm(
+                road_fn = self.geoms[layers[0]],
+                railway_fn = self.geoms[layers[1]],
+                waterways_fn = self.geoms[layers[2]],
+                buildings_area = self.geoms[layers[3]],
+                water_area = self.geoms[layers[4]],
+                landuse_mapping_fn=self._tables["osm_mapping"]  #self.tables[self._tables["osm_mapping"]]
+                )
         
-        
-        osm = self.geoms["OSM"]
-        ds_landuse = workflows.landuse(
-            osm,
-            landuse_mapping_fn=self.tables[self._tables["osm_mapping"]]
-            )
         self.set_tables(ds_landuse, name="landuse")
         
 
@@ -432,48 +527,7 @@ class UWBM(VectorModel):
 
 
 
-    def setup_forcing_interpolation( #own function or integration with precipitation function?
-        self,
-        ts_in: pd.DataFrame,
-        keys: List,
-        interp_method: Optional[str] = 'none'
-        ) -> pd.DataFrame:
-        """Workflow for temporal interpolation of one or multiple time series. Used for precipitation and evaporation time series.
-    
-        Parameters
-        ----------
-        ts_in: pandas.DataFrame
-            Imported DataFrame time series containing precipitation and/or evaporation.
-        key: str
-            Name of key containing forcing data to be interpolated.
-        interp_method: str, optional
-            Method for temporal interpolation of time series. Options: none (default), zeros (inserting zeros), ffill, bfill, linear (linear interpolation between previous and next value)
-    
-        Returns
-        ----------
-        p_out: pandas.DataFrame
-            interpolated precipitation and evaporation time series
-        """
-        for key in keys:
-            logger.info(f"Interpolating {key} using {interp_method}.")
-            
-            ### step 1: remove all non-int and non-float vlaues and replace with NaN
-            ts_in[key] = pd.to_numeric(ts_in[key], errors='coerce')
-            
-                    
-            ### step 2: replace all negative values with 0
-            ts_in[key][ts_in[key] < 0] = float(0)
-            
-            ### step 3: Interpolate with provided method
-            if not interp_method == 'none':
-                if interp_method == 'linear':
-                    ts_in[key] = ts_in[key].interpolate(method='linear')
-                elif interp_method == 'zeros':
-                    ts_in = ts_in.fillna(float(0))
-                else:
-                    ts_in = ts_in.fillna(method=interp_method)
-            
-        return ts_in
+
 
 
 
@@ -503,7 +557,7 @@ class UWBM(VectorModel):
             _dir: str,
             geom_fn: str = None,
         ):
-            """Read geoms at <root/data/geoms> and parse to geopandas."""
+            """Read geoms at <root/input_data/{_dir}> and parse to geopandas."""
             if not self._write:
                 self._geoms = dict()  # fresh start in read-only mode
             dir_default = join(self.root, "input_data", _dir)
@@ -521,7 +575,7 @@ class UWBM(VectorModel):
                     name = basename(fn).split(".")[0]
                 else:
                     name = geom_fn
-                self.set_geoms(gpd.read_file(fn), name=name)
+                self.set_geoms(gpd.read_file(fn, mask = self.region), name=name)
 
 
     def read_OSM(
@@ -548,7 +602,7 @@ class UWBM(VectorModel):
 
 
 
-    def read_tables(self, **kwargs):
+    def read_tables(self, cat, **kwargs):
         """Read table files at <root> and parse to dict of dataframes."""
         """READ OSM LANDUSE TRANSLATION TABLE - copied from wflow"""
         if not self._write:
@@ -589,8 +643,8 @@ class UWBM(VectorModel):
     
     def write_forcing(
         self,
+        fn_out: str = None,
         decimals=2,
-        datetime_format="%d-%m-%Y %H:%M",
         **kwargs,
     ):
         """Write forcing at ``fn_out`` in model ready format (.csv).
@@ -598,40 +652,38 @@ class UWBM(VectorModel):
         Parameters
         ----------
         fn_out: str, Path, optional
-            Path to save output csv file.
+            Path to save output csv file. Default folder is output/forcing.
         decimals: int, optional
             Round the ouput data to the given number of decimals.
-        datetime_format: str, optional
-            Datetime notation of forcing. By default "%d-%m-%Y %H:%M".
         """
            
         if not self._write:
             raise IOError("Model opened in read-only mode")
         if self.forcing:
             self.logger.info("Write forcing file")
-        
-        #fn_out = # <- e.g. 'Dehradun_30y_1h.csv'
-        
+               
         df = pd.DataFrame.from_dict(self.forcing)
-        
-        ### Selecting desired variables
-        df = df[["time", "precip"]]#, "PET"]] #TODO REMOVE HASH ONCE PET IS FIXED
-        ### rename columns
-        
-        df['PET']=df['precip'] #TODO REMOVE FROM FILE ONCE PET IS FIXED
-        
-        df = df.rename(columns={"time":"date", "precip":"P_atm", "PET":"E_pot_OW"})
-        ### calculate crop reference ET
-        df["Ref.grass"] = df["E_pot_OW"] * 0.8982
-        ### reposition columns to "date, P_atm, Ref.grass, E_pot_OW"
+        df = df[["time", "P_atm", "E_pot_OW", "Ref.grass"]]
+        df = df.rename(columns={"time":"date"})
         df = df.loc[:, ["date","P_atm","Ref.grass","E_pot_OW"]]
         df = df.set_index("date")
         
         h = int(self.config["timestepsecs"] / 3600)
         num_yrs = int(np.round(((self.config["endtime"]-self.config["starttime"]).days)/365.25, 0))
-        path = join(self.root, "output/forcing", f"Forcing_{self.config['name']}_{num_yrs}y_{h}h.csv")
         
-        df.to_csv(path, sep=',', date_format=datetime_format)
+        if fn_out == None:
+            path = join(self.root, "output/forcing", f"Forcing_{self.config['name']}_{num_yrs}y_{h}h.csv")
+        else:
+            path = fn_out
+        
+        df.to_csv(path, sep=',', date_format="%d-%m-%Y %H:%M")
+    
+    
+    def write_landuse(
+            self,
+    ):
+        crs = "EPSG:3857" #TODO move to setup_landuse
+    
     
     
     

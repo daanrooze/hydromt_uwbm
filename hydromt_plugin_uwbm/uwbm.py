@@ -9,7 +9,7 @@ from typing import Optional, Dict, Any, Union, List
 from . import DATADIR, workflows
 
 import hydromt
-from hydromt import workflows
+#from hydromt import workflows
 import numpy as np
 import pandas as pd
 import geopandas as gpd
@@ -33,14 +33,14 @@ class UWBM(VectorModel):
     _GEOMS = {
         "OSM": "OpenStreetMap"
         }
-    _FORCING = {            #TODO use this dict for renaming, but is it needed?
+    _FORCING = {
         "time" : "date",
         "precip": "P_atm",
         "PET":"E_pot_OW"
         }
 
     # Name of default folders to create in the model directory
-    _FOLDERS: List[str] = ["input_data", "output"]
+    _FOLDERS: List[str] = ["input", "input/landuse", "input/forcing", "input/config", "output", "output/landuse", "output/forcing", "output/config"]
 
     # Name of defaults catalogs to include when initialising the model
     # For example to include model specific parameter data or mapping
@@ -53,7 +53,7 @@ class UWBM(VectorModel):
     def __init__(
         self,
         root: Optional[str] = None,
-        mode: str = "w",
+        mode: str = "w+",
         config_fn: Optional[str] = None,
         data_libs: Optional[Union[List[str], str]] = None,
         logger: logging.Logger = logger,
@@ -88,37 +88,25 @@ class UWBM(VectorModel):
             root=root,
             mode=mode,
             config_fn=config_fn,
-            data_libs=data_libs, #TODO add local files to data_libs
+            data_libs=data_libs,
             logger=logger,
         )
         # If your model needs any extra specific initialisation add them here
-        #self._tables = dict()  #TODO remove line
-        #self._geoms = None     #TODO remove line
 
 
 
 
     # SETUP METHODS
     # Write here specific methods to add or update model data components
-    
-    #TODO add function for checking if folders exist, otherwise add folders
-    def makedir(
-            self,
-            path
-    ):
-        if not os.path.exists(path):
-            self.logger.info(f"Directory {path} not found. Creating new directory.")
-            os.makedirs(path)
-   
 
-    
     def setup_project(
         self,
         region,
-        name: str = None, #TODO I need to specify a specific pilot name
+        name: str = None,
         t_start: str = None,
         t_end: str = None,
         ts: int = None,
+        crs: Optional[str] = "EPSG:3857"
     ):
         """Setup project geometry from vector"""
         if name == None:
@@ -132,31 +120,26 @@ class UWBM(VectorModel):
         if ts == None or ts not in [3600,86400]:
             raise IOError("Provide timestep in seconds (3600 or 86400 seconds)")
         
-        
-        kind, region = workflows.parse_region( #TODO: /t is interpreted as tab instead of string in filename
-            region, data_catalog=self.data_catalog, logger=self.logger #TODO: only json supported?
+        kind, region = hydromt.workflows.parse_region(
+            region, data_catalog=self.data_catalog, logger=self.logger,
         )
+        
+        
         
         if kind in ["geom", "bbox"]:
             self.setup_region(region=region, hydrography_fn=None, basin_index_fn=None)
         else:
             raise IOError("Provide project region as either GeoPandas DataFrame or BoundingBox.")
-
-        _dir = "project_area"
         
-        #TODO Add check on empty project area folder.
-        # if case not in join(self.root, "input_data", _dir):
-            #raise IOError(f"Case study region not found in {_dir}")
-
-        #self.read_geoms(_dir, name)
-        #self.set_geoms(self.geoms[name], name="project_geom")
+        region = self.geoms["region"].to_crs(crs)
+        self.set_geoms(region, name="region")
+        
         self.set_config("starttime", pd.to_datetime(t_start))
         self.set_config("endtime", pd.to_datetime(t_end))
         self.set_config("timestepsecs", ts)
         self.set_config("name", name)
     
-    
-    
+        
     def setup_precip_forcing(
         self,
         precip_fn: str = "era5_hourly_zarr",
@@ -183,7 +166,6 @@ class UWBM(VectorModel):
         geom = self.region
         #geom = self.geoms["project_geom"]
 
-
         precip = self.data_catalog.get_rasterdataset(
             precip_fn,
             geom=geom,
@@ -198,8 +180,7 @@ class UWBM(VectorModel):
         precip_out = precip_out.droplevel(level=1).reset_index()
 
         precip_out.attrs.update({"precip_fn": precip_fn})
-        self.set_forcing(precip_out, name="precip")
-
+        self.set_forcing(precip_out, name="precip") #TODO change to P_atm
 
 
     def setup_pet_forcing(
@@ -314,7 +295,7 @@ class UWBM(VectorModel):
 
             temp_in = hydromt.workflows.forcing.temp(
                 ds["temp"],
-                dem_model=None, #TODO 'ValueError: dimension 'time' already exists as a scalar variable'
+                dem_model=None,
                 dem_forcing=dem_forcing,
                 lapse_correction=temp_correction,
                 logger=self.logger,
@@ -355,7 +336,7 @@ class UWBM(VectorModel):
                 ds_out["press_msl"], 
                 ds_out["kin"], 
                 ds_out["kout"], 
-                timestep=86400, 
+                timestep=timestep, 
                 cp=1005.0, 
                 beta=20.0, 
                 Cs=110.0
@@ -366,7 +347,7 @@ class UWBM(VectorModel):
                 ds_out["temp"], 
                 ds_out["press_msl"], 
                 ds_out["kin"], 
-                timestep=86400, 
+                timestep=timestep, 
                 cp=1005.0
             )
         
@@ -414,8 +395,8 @@ class UWBM(VectorModel):
                     "temp_dew",
                 )
         '''
-  
-        pet_out = hydromt.workflows.forcing.resample_time(pet_out, freq = freq, downsampling="sum")
+        #TODO: check pet_out here
+        pet_out = hydromt.workflows.forcing.resample_time(pet_out, freq = freq, downsampling="sum") #TODO: downsampling doesn't work for PET
         
         pet_out = pet_out.to_dataframe(name="E_pot_OW") #TODO: how to add name to dataarray in PET calculation?
         pet_out = pet_out.droplevel(level=1).reset_index()
@@ -431,221 +412,120 @@ class UWBM(VectorModel):
         self.set_forcing(pet_out, name="pet")
 
 
-
-
-
-    
     def setup_landuse(
         self,
         source: str = "osm",
-        landuse_mapping_fn="osm_mapping",
+        landuse_mapping_fn = None
     ):
+        """ Generate landuse map for region based on provided base files.
+
+        Parameters
+        ----------
+        source: str, optional
+            Source of landuse base files. Current default is "osm".
+        landuse_mapping_fn: str, optional
+            Name of landuse mapping translation table. Current default is "osm_mapping".
+        """
         sources = ["osm"]
         if source not in sources:
             raise IOError(f"Provide source of landuse files from {sources}")
         
         if source == "osm":
-            self.read_tables(cat = "landuse")
-            #TODO: add check if columns are called correctly
-            #TODO: add check if width values are not integer or float
-            #TODO: add check if 'reclass' is in [paved_roof, closed_paved, open_paved, unpaved, water]
-            
+            table = self.data_catalog.get_dataframe(landuse_mapping_fn) #TODO: how to add fallback option for csv in DATADIR?
+            # in _init_ data catalog from yml, provide yml path in _CATALOGS (see wflow)
+            self.set_tables(table, name = landuse_mapping_fn) #TODO: don't set to model
+            if not all(item in table.columns for item in ['fclass', 'width_t', 'reclass']):
+                raise IOError("Provide translation table with columns 'fclass', 'width_t', 'reclass'")
+            if not all(item in ['paved_roof', 'closed_paved', 'open_paved', 'unpaved', 'water'] for item in table['reclass']):
+                raise IOError("Valid translation classes are 'paved_roof', 'closed_paved', 'open_paved', 'unpaved', 'water'")
+            if not table['width_t'].dtypes in ['float64', 'int']:
+                raise IOError("Provide total width (width_t) values as float or int'")
+
             layers = [
-                "gis_osm_roads_free_1",
-                "gis_osm_railways_free_1",
-                "gis_osm_waterways_free_1",
-                "gis_osm_buildings_a_free_1",
-                "gis_osm_water_a_free_1"
+                "osm_roads",
+                "osm_railways",
+                "osm_waterways",
+                "osm_buildings",
+                "osm_water"
             ]
-            
             for layer in layers:
-                self.read_geoms(_dir = "landuse", geom_fn = layer)
+                try:
+                    osm_layer = self.data_catalog.get_geodataframe(layer, geom = self.region)        
+                    self.set_geoms(osm_layer, name=layer)
+                except:
+                    osm_layer = gpd.GeoDataFrame()
+                    self.set_geoms(osm_layer, name=layer)
             
-            #self.get_data()
-            #osm = self.geoms["OSM"]
-            ds_landuse = workflows.landuse_from_osm(
-                road_fn = self.geoms[layers[0]],
+            lu_map = workflows.landuse.landuse_from_osm( #TODO change landuse function to take empty layers
+                region = self.region,
+                road_fn = self.geoms["osm_roads"],
                 railway_fn = self.geoms[layers[1]],
                 waterways_fn = self.geoms[layers[2]],
                 buildings_area = self.geoms[layers[3]],
                 water_area = self.geoms[layers[4]],
-                landuse_mapping_fn=self._tables["osm_mapping"]  #self.tables[self._tables["osm_mapping"]]
+                landuse_mapping_fn=self._tables["osm_mapping"]
                 )
-        
-        self.set_tables(ds_landuse, name="landuse")
-        
-
-
-
-    
-
-    def setup_soiltype( # not important for first functionality of plugin
-        self,
-        value_name: str,
-        value: int or float,
-        name: Optional[str] = None,
-    ):
-        """Adding a constant value to a response unit (for instance soilgrids).
-        
-        Parameters
-        ----------
-        value_name: str
-            Name of the attribute that is changed.
-        value: float or int
-            Value of the attribute that is changed.
-        name: str, optional
-            Name of new map layer, this is used to overwrite the name of a DataFrame
-            or to select a variable from a Dataset.
-        
-        Returns
-        ----------
-        response_unit: pd.GeoDataFrame
-            Response unit geometry
-        """
-        geom = self.geoms["project_geom"]
-        
-        ### type checks, copied from set_staticgeoms.
-        gtypes = [gpd.GeoDataFrame, gpd.GeoSeries]
-        if not np.any([isinstance(geom, t) for t in gtypes]):
-            raise ValueError("First parameter map(s) should be geopandas.GeoDataFrame or geopandas.GeoSeries")
-        
-        ### setting single value:    
-        if value_name not in geom:
-            raise ValueError(f"Attribute '{value_name}' not found in GeoDataFrame")
-        
-        if not (isinstance(value, int) or isinstance(value, float)):
-            raise ValueError(f"The assigned value for '{value_name}' must be an integer or float")
-        else: 
-            geom[value_name] = value
-        
-        self.set_tables(geom, name="soiltype")
+        # Add landuse map to geoms
+        self.set_geoms(lu_map, name="landuse_map")
+        # Create landuse table from landuse map
+        lu_table = workflows.landuse.landuse_table(
+            lu_map = self.geoms['landuse_map']
+            )
+        # Add landuse table to tables
+        self.set_tables(lu_table, name="landuse_table")
+        # Add landuse categories to config
+        df_landuse = self.tables['landuse_table']
+        for reclass in df_landuse['reclass']:
+            self.set_config("landuse", f"{reclass}", float(df_landuse.loc[df_landuse["reclass"]==reclass, 'area']))
 
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-    def setup_model_config(self, fn): #TODO: how to bring values from setup_landuse (saved as dF or dict) into the config toml file?
+    def setup_model_config(self):
         """Update TOML configuration file based on landuse calculations"""
-        self.set_config("total_area", "value") #refer to dictionary created by OSM landuse
-        self.set_config("total_area", "value")
-        self.set_config("total_area", "value")
-        self.set_config("total_area", "value")
-        self.set_config("total_area", "value")
-        self.set_config("total_area", "value")
+        neighbourhood_params = self._configread()
+        for key in self.get_config("landuse"):
+            neighbourhood_params[key] = self.get_config("landuse", f"{key}")
+            
         
+        #TODO: update 1)config landuse area and 2) config landuse fraction for each land use class.
         
-        return
+        #TODO: move config write below to separate config_write function
+        #self._configwrite(neighbourhood_params = neighbourhood_params)
 
 
     # ====================================================================================================================================================
     # I/O METHODS
     # Write here specific methods to read or write model data components or overwrite the ones from HydroMT CORE
 
-    def read_geoms(
-            self,
-            _dir: str,
-            geom_fn: str = None,
-        ):
-            """Read geoms at <root/input_data/{_dir}> and parse to geopandas."""
-            if not self._write:
-                self._geoms = dict()  # fresh start in read-only mode
-            dir_default = join(self.root, "input_data", _dir)
-       #     dir_mod = dirname(
-       #         self.get_config("geoms", abs_path=True, fallback=dir_default)
-       #     )
-            if geom_fn == None:
-                fns = glob.glob(join(dir_default, "*.shp"))
-            else:
-                fns = glob.glob(join(dir_default, f"{geom_fn}.shp"))
-       #     if len(fns) > 1:
-       #         self.logger.info("Reading model staticgeom files.")
-            for fn in fns:
-                if geom_fn == None:
-                    name = basename(fn).split(".")[0]
-                else:
-                    name = geom_fn
-                self.set_geoms(gpd.read_file(fn, mask = self.region), name=name)
+    def write(self):
+        self.write_forcing()
+        self.write_tables()
+        self.write_geoms()
+        #self.write_config()
 
 
-    def read_OSM(
-            self,
-            osm_fn: str = "osm",
-            layers = [
-                "gis_osm_roads_free_1",
-                "gis_osm_railways_free_1",
-                "gis_osm_waterways_free_1",
-                "gis_osm_buildings_a_free_1",
-                "gis_osm_water_a_free_1"
-            ]
-    ):
-        if not self._write:
-            self._geoms = dict()  # fresh start in read-only mode
-        dir_default = join(self.root, "input_data")
-    #    dir_mod = dirname( #op zoek naar input/landuse
-    #        self.get_config("landuse", abs_path=True, fallback=dir_default)
-    #    )
-        fns = glob.glob(join(dir_default, "input_data", "*.shp") in layers) #TODO: how to only import the relevant layers?
-        for fn in fns:
-            name = basename(fn).split(".")[0]
-            self.set_geoms(gpd.read_file(fn, mask = self.geoms), name="OSM") #TODO: save to single geopackage or different files under _geoms?
-
-
-
-    def read_tables(self, cat, **kwargs):
-        """Read table files at <root> and parse to dict of dataframes."""
-        """READ OSM LANDUSE TRANSLATION TABLE - copied from wflow"""
-        if not self._write:
-            self._tables = dict()  # start fresh in read-only mode
-
-        self.logger.info("Reading model table files.")
-        dir_landuse = join(self.root, "input_data/landuse")
-        fns = glob.glob(join(dir_landuse, "*.csv"))
-        if len(fns) > 0:
-            for fn in fns:
-                name = basename(fn).split(".")[0]
-                tbl = pd.read_csv(fn)
-                self.set_tables(tbl, name=name)
-                #error message if more than 1 file for converting landuse
-
-
-
-
-
-
-    def _configread(self, fn):
+    def _configread(self):
         """Read TOML configuration file"""
-        with codecs.open(fn, "r", encoding="utf-8") as f:
+        directory = join(self.root, "input", "config")
+        with codecs.open(join(directory, f"ep_neighbourhood_{self.config['name']}.ini"), "r", encoding="utf-8") as f:
             fdict = toml.load(f)
-        return fdict #TODO how to add to model?
+        #self.set_tables(fdict, name="neighbourhood_parameters")
+        return fdict
 
-    def _configwrite(self, fn):
+    def _configwrite(self, neighbourhood_params):
         """Write TOML configuration file"""
-        with codecs.open(fn, "w", encoding="utf-8") as f:
-            toml.dump(self.config, f)
+        directory = join(self.root, "output", "config")
+        with codecs.open(join(directory, f"ep_neighbourhood_{self.config['name']}.ini"), "w", encoding="utf-8") as f:
+            toml.dump(neighbourhood_params, f)
 
-
-
-        
-    
-    
+ 
     
     
     def write_forcing(
         self,
         fn_out: str = None,
-        decimals=2,
-        **kwargs,
+        decimals=2
     ):
         """Write forcing at ``fn_out`` in model ready format (.csv).
 
@@ -661,10 +541,12 @@ class UWBM(VectorModel):
             raise IOError("Model opened in read-only mode")
         if self.forcing:
             self.logger.info("Write forcing file")
+        else:
+            pass
                
         df = pd.DataFrame.from_dict(self.forcing)
         df = df[["time", "P_atm", "E_pot_OW", "Ref.grass"]]
-        df = df.rename(columns={"time":"date"})
+        df = df.rename(columns={"time":f"{self._FORCING['time']}"})
         df = df.loc[:, ["date","P_atm","Ref.grass","E_pot_OW"]]
         df = df.set_index("date")
         
@@ -672,17 +554,38 @@ class UWBM(VectorModel):
         num_yrs = int(np.round(((self.config["endtime"]-self.config["starttime"]).days)/365.25, 0))
         
         if fn_out == None:
-            path = join(self.root, "output/forcing", f"Forcing_{self.config['name']}_{num_yrs}y_{h}h.csv")
+            path = join(self.root, "output", "forcing", f"Forcing_{self.config['name']}_{num_yrs}y_{h}h.csv")
         else:
             path = fn_out
         
         df.to_csv(path, sep=',', date_format="%d-%m-%Y %H:%M")
     
     
+    
+    
     def write_landuse(
             self,
+            fn_out: str = None
     ):
-        crs = "EPSG:3857" #TODO move to setup_landuse
+        """Write landuse at ``fn_out`` in model ready format (.csv and .shp).
+
+        Parameters
+        ----------
+        fn_out: str, Path, optional
+            Path to save output files. Default folder is output/landuse.
+        decimals: int, optional
+            Round the ouput data to the given number of decimals.
+        """
+        if fn_out == None:
+            path = join(self.root, "output", "landuse")
+        else:
+            path = fn_out
+        # Write landuse table
+        fn_lu_table = f"landuse_{self.config['name']}"
+        self.tables['landuse_table'].to_csv(join(path, fn_lu_table + ".csv"))
+        # Write landuse map
+        fn_lu_map = f"landuse_{self.config['name']}"
+        self.geoms['landuse_map'].to_file(join(path, fn_lu_map + ".shp"))
     
     
     

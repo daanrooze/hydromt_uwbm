@@ -1,4 +1,0 @@
-my_dataset:
-  data_type: GeoDataFrame
-  driver: vector
-  path: c:\Repos\hydromt_plugin_uwbm\tmp\test_case\input_data\project_area\Gdynia_town_polygon.shp

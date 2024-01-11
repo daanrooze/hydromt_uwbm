@@ -87,32 +87,40 @@ def landuse_table(
     ### make dataframe of areas
     lu_table = np.round(lu_map.area.to_frame(),0)
     lu_table = lu_table.rename(columns={0: 'area'}).reset_index()
-    area_tot = float(lu_table['area'].sum())
+    tot_area = float(lu_table['area'].sum())
 
     # Increase water size
-    if lu_map.loc['water'].empty==True or lu_map.loc['water'].geometry.area < 0.01*area_tot:
+    if lu_map.loc['water'].empty==True or lu_map.loc['water'].geometry.area < 0.01*tot_area:
         
         # Add water if not present
         if lu_map.loc['water'].empty==True:
             lu_table.loc[len(lu_table)] = ['water', 0]
         
-        area_tot_new = area_tot / 0.99  
+        area_tot_new = tot_area / 0.99  
         
         lu_table.loc[lu_table['reclass'] == 'water', 'area'] = lu_table.loc[lu_table['reclass'] == 'water', 'area'] + area_tot_new * 0.01
-        lu_table['perc'] = np.round(lu_table['area'] / area_tot_new, 3)
+        lu_table['frac'] = np.round(lu_table['area'] / area_tot_new, 3)
     else:
-        lu_table['perc'] = np.round(lu_table['area'] / area_tot, 3)
-    lu_table = pd.concat([lu_table, pd.DataFrame({'reclass': 'area_tot', 'area': area_tot, 'perc': 1}, index=[len(lu_table)])])
-    #TODO: rename columns to model abbreviations
+        lu_table['frac'] = np.round(lu_table['area'] / tot_area, 3)
+    lu_table = pd.concat([lu_table, pd.DataFrame({'reclass': 'tot_area', 'area': tot_area, 'frac': 1}, index=[len(lu_table)])])
+    
+    # Rename index values to model conventions
+    lu_table['reclass'] = lu_table['reclass'].replace({
+        'open_paved': 'op',
+        'water': 'ow',
+        'unpaved': 'up',
+        'paved_roof': 'pr',
+        'closed_paved': 'cp'})
     return lu_table
 
 
 
     
-def linestring_buffer(input_ds, reclass, **kwargs):
+def linestring_buffer(
+        input_ds,
+        reclass
+):
     # Creating buffers around categories
-
-   
     input_ds_select = input_ds.loc[input_ds['reclass'] == reclass]
     
     output_ds = input_ds_select.buffer((input_ds_select['width_t']) / 2)
@@ -125,7 +133,10 @@ def linestring_buffer(input_ds, reclass, **kwargs):
     return output_ds
 
 
-def combine_layers(ds_base, ds_add, **kwargs):
+def combine_layers(
+        ds_base,
+        ds_add
+):
     # Combine two geodataframe layers
     if not ds_add.empty:
         #ds_add = ds_add.explode()

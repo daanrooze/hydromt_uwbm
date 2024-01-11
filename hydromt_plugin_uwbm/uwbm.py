@@ -42,10 +42,7 @@ class UWBM(VectorModel):
     # Name of default folders to create in the model directory
     _FOLDERS: List[str] = ["input", "input/landuse", "input/forcing", "input/config", "output", "output/landuse", "output/forcing", "output/config"]
 
-    # Name of defaults catalogs to include when initialising the model
-    # For example to include model specific parameter data or mapping
-    # These default catalogs can be placed in the _DATADIR folder.
-    _CATALOGS: List[str] = []
+    _CATALOGS = [join(_DATADIR, "parameters_data.yml")]
     # Cli args forwards the region and res arguments to the correct functions
     # Uncomment, check and overwrite if needed
     # _CLI_ARGS = {"region": <your func>, "res": <your func>}
@@ -92,7 +89,7 @@ class UWBM(VectorModel):
             logger=logger,
         )
         # If your model needs any extra specific initialisation add them here
-
+        #self.data_catalog.from_yml(self._CATALOGS) #TODO: line not required?
 
 
 
@@ -424,16 +421,26 @@ class UWBM(VectorModel):
         source: str, optional
             Source of landuse base files. Current default is "osm".
         landuse_mapping_fn: str, optional
-            Name of landuse mapping translation table. Current default is "osm_mapping".
+            Name of landuse mapping translation table. Default is "osm_mapping_default".
         """
+        self.logger.info("Preparing landuse map.")
+        
         sources = ["osm"]
         if source not in sources:
             raise IOError(f"Provide source of landuse files from {sources}")
         
+        if landuse_mapping_fn is None:
+            self.logger.info(f"No landuse translation table provided. Using default translation table for source {source}.")
+            fn_map = f"{source}_mapping_default"
+        else:
+            fn_map = landuse_mapping_fn
+        if not isfile(fn_map) and fn_map not in self.data_catalog:
+            raise ValueError(f"LULC mapping file not found: {fn_map}")
+        
         if source == "osm":
-            table = self.data_catalog.get_dataframe(landuse_mapping_fn) #TODO: how to add fallback option for csv in DATADIR?
+            table = self.data_catalog.get_dataframe(fn_map) #TODO: how to add fallback option for csv in DATADIR?
             # in _init_ data catalog from yml, provide yml path in _CATALOGS (see wflow)
-            self.set_tables(table, name = landuse_mapping_fn) #TODO: don't set to model
+            #self.set_tables(table, name = landuse_mapping_fn) #TODO: don't set to model
             if not all(item in table.columns for item in ['fclass', 'width_t', 'reclass']):
                 raise IOError("Provide translation table with columns 'fclass', 'width_t', 'reclass'")
             if not all(item in ['paved_roof', 'closed_paved', 'open_paved', 'unpaved', 'water'] for item in table['reclass']):
@@ -453,17 +460,17 @@ class UWBM(VectorModel):
                     osm_layer = self.data_catalog.get_geodataframe(layer, geom = self.region)        
                     self.set_geoms(osm_layer, name=layer)
                 except:
-                    osm_layer = gpd.GeoDataFrame()
+                    osm_layer = gpd.GeoDataFrame(columns=['geometry'], geometry='geometry')
                     self.set_geoms(osm_layer, name=layer)
             
             lu_map = workflows.landuse.landuse_from_osm( #TODO change landuse function to take empty layers
                 region = self.region,
                 road_fn = self.geoms["osm_roads"],
-                railway_fn = self.geoms[layers[1]],
-                waterways_fn = self.geoms[layers[2]],
-                buildings_area = self.geoms[layers[3]],
-                water_area = self.geoms[layers[4]],
-                landuse_mapping_fn=self._tables["osm_mapping"]
+                railway_fn = self.geoms["osm_railways"],
+                waterways_fn = self.geoms["osm_waterways"],
+                buildings_area = self.geoms["osm_buildings"],
+                water_area = self.geoms["osm_water"],
+                landuse_mapping_fn = table
                 )
         # Add landuse map to geoms
         self.set_geoms(lu_map, name="landuse_map")
@@ -475,20 +482,21 @@ class UWBM(VectorModel):
         self.set_tables(lu_table, name="landuse_table")
         # Add landuse categories to config
         df_landuse = self.tables['landuse_table']
+        
         for reclass in df_landuse['reclass']:
-            self.set_config("landuse", f"{reclass}", float(df_landuse.loc[df_landuse["reclass"]==reclass, 'area']))
-
+            self.set_config("landuse_area", f"{reclass}", float(df_landuse.loc[df_landuse["reclass"]==reclass, 'area']))
+            self.set_config("landuse_frac", f"{reclass}", float(df_landuse.loc[df_landuse["reclass"]==reclass, 'frac']))
 
 
 
     def setup_model_config(self):
         """Update TOML configuration file based on landuse calculations"""
         neighbourhood_params = self._configread()
-        for key in self.get_config("landuse"):
+        for key in self.get_config("landuse_area"):
             neighbourhood_params[key] = self.get_config("landuse", f"{key}")
-            
+            #TODO write to toml based on config
         
-        #TODO: update 1)config landuse area and 2) config landuse fraction for each land use class.
+        
         
         #TODO: move config write below to separate config_write function
         #self._configwrite(neighbourhood_params = neighbourhood_params)

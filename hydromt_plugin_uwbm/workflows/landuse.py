@@ -60,9 +60,18 @@ def landuse_from_osm(
     da_water_area = water_area.assign(reclass='water')
     
     # Create buffers along lines
-    da_closed_paved = linestring_buffer(ds_joined, 'closed_paved')
-    da_open_paved = linestring_buffer(ds_joined, 'open_paved')
-    da_water = linestring_buffer(ds_joined, 'water')
+    if any(ds_joined['reclass'] == 'closed_paved'):
+        da_closed_paved = linestring_buffer(ds_joined, 'closed_paved')
+    else:
+        da_closed_paved = gpd.GeoDataFrame(columns=['geometry'], geometry='geometry')
+    if any(ds_joined['reclass'] == 'open_paved'):
+        da_open_paved = linestring_buffer(ds_joined, 'open_paved')
+    else:
+        da_open_paved = gpd.GeoDataFrame(columns=['geometry'], geometry='geometry')
+    if any(ds_joined['reclass'] == 'water'):
+        da_water = linestring_buffer(ds_joined, 'water')
+    else:
+        da_water = gpd.GeoDataFrame(columns=['geometry'], geometry='geometry')
 
     # Join water areas and waterways
     da_water = pd.concat([da_water_area, da_water])

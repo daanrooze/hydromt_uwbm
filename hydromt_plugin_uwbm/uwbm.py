@@ -120,9 +120,7 @@ class UWBM(VectorModel):
         kind, region = hydromt.workflows.parse_region(
             region, data_catalog=self.data_catalog, logger=self.logger,
         )
-        
-        
-        
+
         if kind in ["geom", "bbox"]:
             self.setup_region(region=region, hydrography_fn=None, basin_index_fn=None)
         else:
@@ -161,7 +159,6 @@ class UWBM(VectorModel):
         endtime = self.get_config("endtime")
         freq = pd.to_timedelta(self.get_config("timestepsecs"), unit="s")
         geom = self.region
-        #geom = self.geoms["project_geom"]
 
         precip = self.data_catalog.get_rasterdataset(
             precip_fn,
@@ -177,7 +174,7 @@ class UWBM(VectorModel):
         precip_out = precip_out.droplevel(level=1).reset_index()
 
         precip_out.attrs.update({"precip_fn": precip_fn})
-        self.set_forcing(precip_out, name="precip") #TODO change to P_atm
+        self.set_forcing(precip_out, name="precip")
 
 
     def setup_pet_forcing(
@@ -392,10 +389,9 @@ class UWBM(VectorModel):
                     "temp_dew",
                 )
         '''
-        #TODO: check pet_out here
-        pet_out = hydromt.workflows.forcing.resample_time(pet_out, freq = freq, downsampling="sum") #TODO: downsampling doesn't work for PET
+        pet_out = hydromt.workflows.forcing.resample_time(pet_out, freq = freq, downsampling="mean")
         
-        pet_out = pet_out.to_dataframe(name="E_pot_OW") #TODO: how to add name to dataarray in PET calculation?
+        pet_out = pet_out.to_dataframe(name="E_pot_OW")
         pet_out = pet_out.droplevel(level=1).reset_index()
         
         pet_out["Ref.grass"] = pet_out["E_pot_OW"] * 0.8982
@@ -438,9 +434,7 @@ class UWBM(VectorModel):
             raise ValueError(f"LULC mapping file not found: {fn_map}")
         
         if source == "osm":
-            table = self.data_catalog.get_dataframe(fn_map) #TODO: how to add fallback option for csv in DATADIR?
-            # in _init_ data catalog from yml, provide yml path in _CATALOGS (see wflow)
-            #self.set_tables(table, name = landuse_mapping_fn) #TODO: don't set to model
+            table = self.data_catalog.get_dataframe(fn_map)
             if not all(item in table.columns for item in ['fclass', 'width_t', 'reclass']):
                 raise IOError("Provide translation table with columns 'fclass', 'width_t', 'reclass'")
             if not all(item in ['paved_roof', 'closed_paved', 'open_paved', 'unpaved', 'water'] for item in table['reclass']):
@@ -455,15 +449,18 @@ class UWBM(VectorModel):
                 "osm_buildings",
                 "osm_water"
             ]
+
             for layer in layers:
                 try:
-                    osm_layer = self.data_catalog.get_geodataframe(layer, geom = self.region)        
+                    osm_layer = self.data_catalog.get_geodataframe(layer, geom = self.region, crs=self.crs)  
+                    osm_layer = osm_layer.to_crs(self.crs)
                     self.set_geoms(osm_layer, name=layer)
                 except:
-                    osm_layer = gpd.GeoDataFrame(columns=['geometry'], geometry='geometry')
+                    osm_layer = gpd.GeoDataFrame(columns=['geometry'], geometry='geometry', crs=self.crs)
+                    osm_layer = osm_layer.to_crs(self.crs)
                     self.set_geoms(osm_layer, name=layer)
             
-            lu_map = workflows.landuse.landuse_from_osm( #TODO change landuse function to take empty layers
+            lu_map = workflows.landuse.landuse_from_osm(
                 region = self.region,
                 road_fn = self.geoms["osm_roads"],
                 railway_fn = self.geoms["osm_railways"],
@@ -472,6 +469,7 @@ class UWBM(VectorModel):
                 water_area = self.geoms["osm_water"],
                 landuse_mapping_fn = table
                 )
+            
         # Add landuse map to geoms
         self.set_geoms(lu_map, name="landuse_map")
         # Create landuse table from landuse map
@@ -489,13 +487,26 @@ class UWBM(VectorModel):
 
 
 
-    def setup_model_config(self):
-        """Update TOML configuration file based on landuse calculations"""
-        neighbourhood_params = self._configread()
-        for key in self.get_config("landuse_area"):
-            neighbourhood_params[key] = self.get_config("landuse", f"{key}")
-            #TODO write to toml based on config
-        
+    def setup_model_config(
+            self,
+            config_fn: str = None
+    ):
+        """ Update TOML configuration file based on landuse calculations.
+
+        Parameters
+        ----------
+        config_fn: str, optional
+            Path to the config file. Default is self.config['name']
+        """
+        if config_fn == None:
+            config_fn = f"ep_neighbourhood_{self.config['name']}.ini"
+        neighbourhood_params = self._configread(config_fn = config_fn)
+        keys = ['op', 'ow', 'up', 'pr', 'cp']
+        for key in keys:
+            neighbourhood_params[f"tot_{key}_area"] = self.get_config("landuse_area", f"{key}")
+            neighbourhood_params[f"{key}_frac"] = self.get_config("landuse_frac", f"{key}")
+        neighbourhood_params["tot_area"] = self.get_config("landuse_area", "tot_area")
+        #TODO: self.set_tables() eerst read, dan setup en dan write?
         
         
         #TODO: move config write below to separate config_write function
@@ -509,27 +520,25 @@ class UWBM(VectorModel):
     def write(self):
         self.write_forcing()
         self.write_tables()
-        self.write_geoms()
+        self.write_geoms(join(self.root, "output", "landuse"))#'landuse_map') #TODO: prevent writing all layers, only landuse_map
         #self.write_config()
 
 
-    def _configread(self):
+    def _configread(self, config_fn): #TODO still need this adjusted function as ini file does not have headers
         """Read TOML configuration file"""
-        directory = join(self.root, "input", "config")
-        with codecs.open(join(directory, f"ep_neighbourhood_{self.config['name']}.ini"), "r", encoding="utf-8") as f:
+        path = join(self.root, "input", "config", config_fn)
+        with codecs.open(path, "r", encoding="utf-8") as f:
             fdict = toml.load(f)
         #self.set_tables(fdict, name="neighbourhood_parameters")
         return fdict
 
-    def _configwrite(self, neighbourhood_params):
-        """Write TOML configuration file"""
-        directory = join(self.root, "output", "config")
-        with codecs.open(join(directory, f"ep_neighbourhood_{self.config['name']}.ini"), "w", encoding="utf-8") as f:
-            toml.dump(neighbourhood_params, f)
+    #def _configwrite(self, neighbourhood_params):
+    #    """Write TOML configuration file"""
+    #    directory = join(self.root, "output", "config")
+    #    with codecs.open(join(directory, f"ep_neighbourhood_{self.config['name']}.ini"), "w", encoding="utf-8") as f:
+    #        toml.dump(neighbourhood_params, f)
 
- 
-    
-    
+
     def write_forcing(
         self,
         fn_out: str = None,
@@ -571,7 +580,7 @@ class UWBM(VectorModel):
     
     
     
-    def write_landuse(
+    def write_landuse( #TODO remove this landuse function
             self,
             fn_out: str = None
     ):
@@ -594,7 +603,7 @@ class UWBM(VectorModel):
         # Write landuse map
         fn_lu_map = f"landuse_{self.config['name']}"
         self.geoms['landuse_map'].to_file(join(path, fn_lu_map + ".shp"))
-    
+        
     
     
     

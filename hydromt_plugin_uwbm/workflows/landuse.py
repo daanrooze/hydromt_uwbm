@@ -132,7 +132,7 @@ def linestring_buffer(
     # Creating buffers around categories
     input_ds_select = input_ds.loc[input_ds['reclass'] == reclass]
     
-    output_ds = input_ds_select.buffer((input_ds_select['width_t']) / 2)
+    output_ds = input_ds_select.buffer((input_ds_select['width_t']) / 2, cap_style=2)
     
     output_ds = gpd.GeoDataFrame(geometry=gpd.GeoSeries(output_ds))
     output_ds = output_ds.assign(reclass = reclass)

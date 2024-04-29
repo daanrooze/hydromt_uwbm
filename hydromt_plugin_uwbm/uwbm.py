@@ -9,7 +9,6 @@ from typing import Optional, Dict, Any, Union, List
 from . import DATADIR, workflows
 
 import hydromt
-#from hydromt import workflows
 import numpy as np
 import pandas as pd
 import geopandas as gpd
@@ -40,7 +39,14 @@ class UWBM(VectorModel):
         }
 
     # Name of default folders to create in the model directory
-    _FOLDERS: List[str] = ["input", "input/landuse", "input/forcing", "input/config", "output", "output/landuse", "output/forcing", "output/config"]
+    _FOLDERS: List[str] = ["input",
+                           "input/project_area",
+                           "input/landuse",
+                           "input/config",
+                           "output",
+                           "output/forcing",
+                           "output/landuse",
+                           "output/config"]
 
     _CATALOGS = [join(_DATADIR, "parameters_data.yml")]
     # Cli args forwards the region and res arguments to the correct functions
@@ -89,7 +95,6 @@ class UWBM(VectorModel):
             logger=logger,
         )
         # If your model needs any extra specific initialisation add them here
-        #self.data_catalog.from_yml(self._CATALOGS) #TODO: line not required?
 
 
 
@@ -271,7 +276,7 @@ class UWBM(VectorModel):
             buffer=1,
             time_tuple=(starttime, endtime),
             variables=variables,
-            single_var_as_array=False,  # always return dataset
+            single_var_as_array=False,
         )
 
         if (
@@ -424,22 +429,22 @@ class UWBM(VectorModel):
         sources = ["osm"]
         if source not in sources:
             raise IOError(f"Provide source of landuse files from {sources}")
-        
-        if landuse_mapping_fn is None:
-            self.logger.info(f"No landuse translation table provided. Using default translation table for source {source}.")
-            fn_map = f"{source}_mapping_default"
-        else:
-            fn_map = landuse_mapping_fn
-        if not isfile(fn_map) and fn_map not in self.data_catalog:
-            raise ValueError(f"LULC mapping file not found: {fn_map}")
-        
+                
         if source == "osm":
+            if landuse_mapping_fn is None:
+                self.logger.info(f"No landuse translation table provided. Using default translation table for source {source}.")
+                fn_map = f"{source}_mapping_default"
+            else:
+                fn_map = landuse_mapping_fn
+            if not isfile(fn_map) and fn_map not in self.data_catalog:
+                raise ValueError(f"LULC mapping file not found: {fn_map}")
+            
             table = self.data_catalog.get_dataframe(fn_map)
             if not all(item in table.columns for item in ['fclass', 'width_t', 'reclass']):
                 raise IOError("Provide translation table with columns 'fclass', 'width_t', 'reclass'")
             if not all(item in ['paved_roof', 'closed_paved', 'open_paved', 'unpaved', 'water'] for item in table['reclass']):
                 raise IOError("Valid translation classes are 'paved_roof', 'closed_paved', 'open_paved', 'unpaved', 'water'")
-            if not table['width_t'].dtypes in ['float64', 'int']:
+            if not table['width_t'].dtypes in ['float64', 'int', 'int64']:
                 raise IOError("Provide total width (width_t) values as float or int'")
 
             layers = [
@@ -506,11 +511,10 @@ class UWBM(VectorModel):
             neighbourhood_params[f"tot_{key}_area"] = self.get_config("landuse_area", f"{key}")
             neighbourhood_params[f"{key}_frac"] = self.get_config("landuse_frac", f"{key}")
         neighbourhood_params["tot_area"] = self.get_config("landuse_area", "tot_area")
-        #TODO: self.set_tables() eerst read, dan setup en dan write?
+        self._configwrite(neighbourhood_params = neighbourhood_params)
         
         
-        #TODO: move config write below to separate config_write function
-        #self._configwrite(neighbourhood_params = neighbourhood_params)
+        
 
 
     # ====================================================================================================================================================
@@ -519,25 +523,8 @@ class UWBM(VectorModel):
 
     def write(self):
         self.write_forcing()
-        self.write_tables()
-        self.write_geoms(join(self.root, "output", "landuse"))#'landuse_map') #TODO: prevent writing all layers, only landuse_map
-        #self.write_config()
-
-
-    def _configread(self, config_fn): #TODO still need this adjusted function as ini file does not have headers
-        """Read TOML configuration file"""
-        path = join(self.root, "input", "config", config_fn)
-        with codecs.open(path, "r", encoding="utf-8") as f:
-            fdict = toml.load(f)
-        #self.set_tables(fdict, name="neighbourhood_parameters")
-        return fdict
-
-    #def _configwrite(self, neighbourhood_params):
-    #    """Write TOML configuration file"""
-    #    directory = join(self.root, "output", "config")
-    #    with codecs.open(join(directory, f"ep_neighbourhood_{self.config['name']}.ini"), "w", encoding="utf-8") as f:
-    #        toml.dump(neighbourhood_params, f)
-
+        self.write_tables(join(self.root, "output", "landuse", f"landuse_{self.config['name']}.csv"))
+        self.write_geoms(join(self.root, "output", "landuse", f"landuse_{self.config['name']}.geojson"))
 
     def write_forcing(
         self,
@@ -553,59 +540,44 @@ class UWBM(VectorModel):
         decimals: int, optional
             Round the ouput data to the given number of decimals.
         """
-           
-        if not self._write:
-            raise IOError("Model opened in read-only mode")
-        if self.forcing:
-            self.logger.info("Write forcing file")
-        else:
-            pass
-               
-        df = pd.DataFrame.from_dict(self.forcing)
-        df = df[["time", "P_atm", "E_pot_OW", "Ref.grass"]]
-        df = df.rename(columns={"time":f"{self._FORCING['time']}"})
-        df = df.loc[:, ["date","P_atm","Ref.grass","E_pot_OW"]]
-        df = df.set_index("date")
+        if len(self.forcing)>0:
         
-        h = int(self.config["timestepsecs"] / 3600)
-        num_yrs = int(np.round(((self.config["endtime"]-self.config["starttime"]).days)/365.25, 0))
+            if not self._write:
+                raise IOError("Model opened in read-only mode")
+            if self.forcing:
+                self.logger.info("Write forcing file")
+            else:
+                pass
+                   
+            df = pd.DataFrame.from_dict(self.forcing)
+            df = df[["time", "P_atm", "E_pot_OW", "Ref.grass"]]
+            df = df.rename(columns={"time":f"{self._FORCING['time']}"})
+            df = df.loc[:, ["date","P_atm","Ref.grass","E_pot_OW"]]
+            df = df.set_index("date")
+            
+            h = int(self.config["timestepsecs"] / 3600)
+            num_yrs = int(np.round(((self.config["endtime"]-self.config["starttime"]).days)/365.25, 0))
+            
+            if fn_out == None:
+                path = join(self.root, "output", "forcing", f"Forcing_{self.config['name']}_{num_yrs}y_{h}h.csv")
+            else:
+                path = fn_out
+            
+            df.to_csv(path, sep=',', date_format="%d-%m-%Y %H:%M")
         
-        if fn_out == None:
-            path = join(self.root, "output", "forcing", f"Forcing_{self.config['name']}_{num_yrs}y_{h}h.csv")
-        else:
-            path = fn_out
-        
-        df.to_csv(path, sep=',', date_format="%d-%m-%Y %H:%M")
+        def _configread(self, config_fn):
+            """Read TOML configuration file.
+            This function serves as alternative to the default read_config function to support ini files without headers"""
+            path = join(self.root, "input", "config", config_fn)
+            with codecs.open(path, "r", encoding="utf-8") as f:
+                fdict = toml.load(f)
+            return fdict
     
-    
-    
-    
-    def write_landuse( #TODO remove this landuse function
-            self,
-            fn_out: str = None
-    ):
-        """Write landuse at ``fn_out`` in model ready format (.csv and .shp).
-
-        Parameters
-        ----------
-        fn_out: str, Path, optional
-            Path to save output files. Default folder is output/landuse.
-        decimals: int, optional
-            Round the ouput data to the given number of decimals.
-        """
-        if fn_out == None:
-            path = join(self.root, "output", "landuse")
-        else:
-            path = fn_out
-        # Write landuse table
-        fn_lu_table = f"landuse_{self.config['name']}"
-        self.tables['landuse_table'].to_csv(join(path, fn_lu_table + ".csv"))
-        # Write landuse map
-        fn_lu_map = f"landuse_{self.config['name']}"
-        self.geoms['landuse_map'].to_file(join(path, fn_lu_map + ".shp"))
-        
-    
-    
+        def _configwrite(self, neighbourhood_params):
+            """Write TOML configuration file"""
+            directory = join(self.root, "output", "config")
+            with codecs.open(join(directory, f"ep_neighbourhood_{self.config['name']}.ini"), "w", encoding="utf-8") as f:
+                toml.dump(neighbourhood_params, f)
     
     # MODEL COMPONENTS AND PROPERTIES
     # Write here specific model properties and components not available in HydroMT CORE

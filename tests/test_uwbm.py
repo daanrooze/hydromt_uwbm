@@ -1,6 +1,6 @@
 """Testing UWBM high level methods"""
 
-from hydromt_plugin_uwbm import UWBM
+from hydromt_uwbm import UWBM
 
 
 def test_model_has_name():

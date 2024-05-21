@@ -3,7 +3,7 @@ requires = ["flit_core >=3.4.0,<4"]
 build-backend = "flit_core.buildapi"
 
 [project]
-name = "hydromt_plugin_uwbm"
+name = "hydromt_uwbm"
 dependencies = [
     "hydromt",
     "tomli",        # parsing toml files
@@ -36,14 +36,14 @@ test = [
     "pytest-cov",       # pytest plugin for coverage reports
 ]
 
-full = ["hydromt_plugin_uwbm[doc,dev,test]"]
+full = ["hydromt_uwbm[doc,dev,test]"]
 
 [project.urls]
-Documentation = "https://daanrooze.github.io/hydromt_plugin_uwbm"
-Source = "https://github.com/daanrooze/hydromt_plugin_uwbm"
+Documentation = "https://daanrooze.github.io/hydromt_uwbm"
+Source = "https://github.com/daanrooze/hydromt_uwbm"
 
 [project.entry-points."hydromt.models"] 
-uwbm = "hydromt_plugin_uwbm.uwbm:UWBM"
+uwbm = "hydromt_uwbm.uwbm:UWBM"
 
 [tool.black]
 line-length = 88
@@ -61,13 +61,13 @@ exclude = ["docs"]
 convention = "numpy"
 
 [tool.flit.sdist]
-include = ["hydromt_plugin_uwbm"]
+include = ["hydromt_uwbm"]
 exclude = ["docs", "examples", "tests", ".github"]
 
 
 [tool.mypy]
 packages = [
-"hydromt_plugin_uwbm"    
+"hydromt_uwbm"    
 ]
 exclude = [
     "docs",

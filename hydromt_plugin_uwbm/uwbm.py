@@ -21,11 +21,8 @@ __all__ = ["UWBM"]
 
 logger = logging.getLogger(__name__)
 
-
 class UWBM(VectorModel):
     """This is the uwbm class"""
-
-    # Any global class variables your model should have go here
     _NAME: str = "UWBM"
     _CONF: str = "neighbourhood_params.ini"
     _DATADIR: Path = DATADIR
@@ -94,13 +91,9 @@ class UWBM(VectorModel):
             data_libs=data_libs,
             logger=logger,
         )
-        # If your model needs any extra specific initialisation add them here
 
-
-
+    # ====================================================================================================================================================
     # SETUP METHODS
-    # Write here specific methods to add or update model data components
-
     def setup_project(
         self,
         region,
@@ -214,24 +207,6 @@ class UWBM(VectorModel):
 
             * Required variables for Makkink reference evapotranspiration: \
                 ['temp', 'press_msl', 'kin']
-
-            * Required variables for daily Penman-Monteith \
-                reference evapotranspiration: \
-                    either ['temp', 'temp_min', 'temp_max', 'wind', 'rh', 'kin'] \
-                    for 'penman-monteith_rh_simple' or ['temp', 'temp_min', 'temp_max', 'temp_dew', \
-                    'wind', 'kin', 'press_msl', "wind10_u", "wind10_v"] for 'penman-monteith_tdew' \
-                    (these are the variables available in ERA5)
-                pet_method : {'debruin', 'makkink', 'penman-monteith_rh_simple', \
-                    'penman-monteith_tdew'}, optional
-                    Reference evapotranspiration method, by default 'debruin'.
-                    If penman-monteith is used, requires the installation of the pyet package.
-                press_correction, temp_correction : bool, optional
-                    If True pressure, temperature are corrected using elevation lapse rate,
-                    by default False.
-                dem_forcing_fn : str, default None
-                    Elevation data source with coverage of entire meteorological forcing domain.
-                    If temp_correction is True and dem_forcing_fn is provided this is used in
-                    combination with elevation at model resolution to correct the temperature.
         """
         press_correction = False
         temp_correction = False
@@ -249,26 +224,14 @@ class UWBM(VectorModel):
             variables += ["press_msl", "kin", "kout"]
         elif pet_method == "makkink":
             variables += ["press_msl", "kin"]
-        elif pet_method == "penman-monteith_rh_simple":
-            variables += ["temp_min", "temp_max", "wind", "rh", "kin"]
-        elif pet_method == "penman-monteith_tdew":
-            variables += [
-                "temp_min",
-                "temp_max",
-                "wind10_u",
-                "wind10_v",
-                "temp_dew",
-                "kin",
-                "press_msl",
-            ]
         else:
             methods = [
                 "debruin",
                 "makking",
-            #    "penman-monteith_rh_simple",
-            #    "penman-monteith_tdew",
             ]
-            ValueError(f"Unknown pet method {pet_method}, select from {methods}")
+            raise ValueError(
+                f"Unknown pet method {pet_method}, select from {methods}"
+            )
 
         ds = self.data_catalog.get_rasterdataset(
             temp_pet_fn,
@@ -278,54 +241,6 @@ class UWBM(VectorModel):
             variables=variables,
             single_var_as_array=False,
         )
-
-        if (
-            "penman-monteith" in pet_method
-        ):  # also downscaled temp_min and temp_max for Penman needed
-        
-            dem_forcing = None
-            if dem_forcing_fn is not None:
-                dem_forcing = self.data_catalog.get_rasterdataset(
-                    dem_forcing_fn,
-                    geom=ds.raster.box,  # clip dem with forcing bbox for full coverage
-                    buffer=2,
-                    variables=["elevtn"],
-                ).squeeze()
-
-            temp_in = hydromt.workflows.forcing.temp(
-                ds["temp"],
-                dem_model=None,
-                dem_forcing=dem_forcing,
-                lapse_correction=temp_correction,
-                logger=self.logger,
-                freq=None,  # resample time after pet workflow
-                **kwargs,
-            )
-        
-            temp_max_in = hydromt.workflows.forcing.temp(
-                ds["temp_max"],
-                dem_model=self.grid[self._MAPS["elevtn"]],
-                dem_forcing=dem_forcing,
-                lapse_correction=temp_correction,
-                logger=self.logger,
-                freq=None,  # resample time after pet workflow
-                **kwargs,
-            )
-            temp_max_in.name = "temp_max"
-
-            temp_min_in = hydromt.workflows.forcing.temp(
-                ds["temp_min"],
-                dem_model=self.grid[self._MAPS["elevtn"]],
-                dem_forcing=dem_forcing,
-                lapse_correction=temp_correction,
-                logger=self.logger,
-                freq=None,  # resample time after pet workflow
-                **kwargs,
-            )
-            temp_min_in.name = "temp_min"
-
-            temp_in = xr.merge([temp_in, temp_max_in, temp_min_in])
-
 
         ds_out = ds.raster.sample(geom.centroid)
         
@@ -350,50 +265,6 @@ class UWBM(VectorModel):
                 cp=1005.0
             )
         
-        '''elif "penman-monteith" in pet_method:
-            logger.info("Calculating Penman-Monteith ref evaporation")
-            # Add wind
-            # compute wind from u and v components at 10m (for era5)
-            if ("wind10_u" in ds.data_vars) & ("wind10_v" in ds.data_vars):
-                ds["wind"] = wind(
-                    da_model=dem_model,
-                    wind_u=ds["wind10_u"],
-                    wind_v=ds["wind10_v"],
-                    altitude=wind_altitude,
-                    altitude_correction=wind_correction,
-                )
-            else:
-                ds["wind"] = wind(
-                    da_model=dem_model,
-                    wind=ds["wind"],
-                    altitude=wind_altitude,
-                    altitude_correction=wind_correction,
-                )
-            if pet_method == "penman-monteith_rh_simple":
-                pet_out = pm_fao56(
-                    temp["temp"],
-                    temp["temp_max"],
-                    temp["temp_min"],
-                    ds["press"],
-                    ds["kin"],
-                    ds["wind"],
-                    ds["rh"],
-                    dem_model,
-                    "rh",
-                )
-            elif pet_method == "penman-monteith_tdew":
-                pet_out = pm_fao56(
-                    temp["temp"],
-                    temp["temp_max"],
-                    temp["temp_min"],
-                    ds["press"],
-                    ds["kin"],
-                    ds["wind"],
-                    ds["temp_dew"],
-                    dem_model,
-                    "temp_dew",
-                )
-        '''
         pet_out = hydromt.workflows.forcing.resample_time(pet_out, freq = freq, downsampling="mean")
         
         pet_out = pet_out.to_dataframe(name="E_pot_OW")
@@ -491,7 +362,6 @@ class UWBM(VectorModel):
             self.set_config("landuse_frac", f"{reclass}", float(df_landuse.loc[df_landuse["reclass"]==reclass, 'frac']))
 
 
-
     def setup_model_config(
             self,
             config_fn: str = None
@@ -512,19 +382,15 @@ class UWBM(VectorModel):
             neighbourhood_params[f"{key}_frac"] = self.get_config("landuse_frac", f"{key}")
         neighbourhood_params["tot_area"] = self.get_config("landuse_area", "tot_area")
         self._configwrite(neighbourhood_params = neighbourhood_params)
-        
-        
-        
-
 
     # ====================================================================================================================================================
     # I/O METHODS
-    # Write here specific methods to read or write model data components or overwrite the ones from HydroMT CORE
 
     def write(self):
         self.write_forcing()
         self.write_tables(join(self.root, "output", "landuse", f"landuse_{self.config['name']}.csv"))
         self.write_geoms(join(self.root, "output", "landuse", f"landuse_{self.config['name']}.geojson"))
+
 
     def write_forcing(
         self,
@@ -565,6 +431,7 @@ class UWBM(VectorModel):
             
             df.to_csv(path, sep=',', date_format="%d-%m-%Y %H:%M")
         
+        
         def _configread(self, config_fn):
             """Read TOML configuration file.
             This function serves as alternative to the default read_config function to support ini files without headers"""
@@ -573,11 +440,10 @@ class UWBM(VectorModel):
                 fdict = toml.load(f)
             return fdict
     
+    
         def _configwrite(self, neighbourhood_params):
             """Write TOML configuration file"""
             directory = join(self.root, "output", "config")
             with codecs.open(join(directory, f"ep_neighbourhood_{self.config['name']}.ini"), "w", encoding="utf-8") as f:
                 toml.dump(neighbourhood_params, f)
     
-    # MODEL COMPONENTS AND PROPERTIES
-    # Write here specific model properties and components not available in HydroMT CORE

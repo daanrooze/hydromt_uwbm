@@ -438,18 +438,18 @@ class UWBM(VectorModel):
             df.to_csv(path, sep=',', date_format="%d-%m-%Y %H:%M")
         
         
-        def _configread(self, config_fn):
-            """Read TOML configuration file.
-            This function serves as alternative to the default read_config function to support ini files without headers"""
-            path = join(self.root, "input", "config", config_fn)
-            with codecs.open(path, "r", encoding="utf-8") as f:
-                fdict = toml.load(f)
-            return fdict
-    
-    
-        def _configwrite(self, neighbourhood_params):
-            """Write TOML configuration file"""
-            directory = join(self.root, "output", "config")
-            with codecs.open(join(directory, f"ep_neighbourhood_{self.config['name']}.ini"), "w", encoding="utf-8") as f:
-                toml.dump(neighbourhood_params, f)
+    def _configread(self, config_fn):
+        """Read TOML configuration file.
+        This function serves as alternative to the default read_config function to support ini files without headers"""
+        path = join(self.root, "input", "config", config_fn)
+        with codecs.open(path, "r", encoding="utf-8") as f:
+            fdict = toml.load(f)
+        return fdict
+
+
+    def _configwrite(self, neighbourhood_params):
+        """Write TOML configuration file"""
+        directory = join(self.root, "output", "config")
+        with codecs.open(join(directory, f"ep_neighbourhood_{self.config['name']}.ini"), "w", encoding="utf-8") as f:
+            toml.dump(neighbourhood_params, f)
     

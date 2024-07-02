@@ -2,7 +2,6 @@ import logging
 from hydromt.models import VectorModel
 
 from pathlib import Path
-import os
 from os.path import basename, dirname, isdir, isfile, join
 from typing import Optional, Dict, Any, Union, List
 
@@ -14,8 +13,6 @@ import pandas as pd
 import geopandas as gpd
 import codecs
 import toml
-import glob
-import xarray as xr
 
 __all__ = ["UWBM"]
 
@@ -287,6 +284,14 @@ class UWBM(VectorModel):
         landuse_mapping_fn = None
     ):
         """ Generate landuse map for region based on provided base files.
+        
+        Adds model layer:
+        * **lu_map**: polygon layer containing urban land use
+        * **lu_table**: table containing urban land use surface areas [m2]
+            
+        Updates config:
+        * **landuse_area**: surface area of the land use clasess [m2]
+        * **landuse_frac**: surface area fraction of the land use clasess [-]
 
         Parameters
         ----------
@@ -387,6 +392,7 @@ class UWBM(VectorModel):
     # I/O METHODS
 
     def write(self):
+        "Generic write function for all model workflows"
         self.write_forcing()
         self.write_tables(join(self.root, "output", "landuse", f"landuse_{self.config['name']}.csv"))
         self.write_geoms(join(self.root, "output", "landuse", f"landuse_{self.config['name']}.geojson"))
